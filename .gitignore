@@ -1,0 +1,8 @@
+gestaoinfantil.db
+uploads/
+.env
+.venv/
+logs/
+
+# Secrets do Streamlit (NÃO comitar)
+.streamlit/secrets.toml
