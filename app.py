@@ -6,6 +6,21 @@ from services import (create_user, list_users, update_user_email, create_task, l
                       get_conversion, set_conversion, create_debit, get_report, seed_sample_data, save_user_photo)
 from email_utils import send_email
 
+import logging
+import sys
+import traceback
+
+# Logging setup
+LOG_DIR = os.environ.get('GESTAO_LOGS', 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+log_file = os.path.join(LOG_DIR, 'app.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)]
+)
+logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
+
 
 def is_role(user, role):
     return role in (user.roles or "").split(',')
@@ -222,4 +237,11 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        logging.info("Starting Gestão Infantil app")
+        main()
+    except Exception:
+        logging.exception("Unhandled exception running app")
+        import sys, traceback
+        traceback.print_exc(file=sys.stderr)
+        raise
