@@ -45,6 +45,19 @@ logging.basicConfig(
 )
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
 
+# Registrar exceções não tratadas em arquivo para facilitar debug em deploys
+def _log_uncaught_exceptions(exctype, value, tb):
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        with open(os.path.join(LOG_DIR, 'startup_error.log'), 'a', encoding='utf-8') as fh:
+            fh.write('\n=== Uncaught exception ===\n')
+            traceback.print_exception(exctype, value, tb, file=fh)
+    except Exception:
+        # Não devemos falhar o processo ao tentar logar a exceção
+        pass
+
+sys.excepthook = _log_uncaught_exceptions
+
 # Evita múltiplos disparos de abertura de navegador em reruns do Streamlit
 _AUTO_BROWSER_STARTED = False
 
