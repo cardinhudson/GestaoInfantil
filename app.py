@@ -119,8 +119,14 @@ def _open_local_browser(host='localhost', ports=range(8501, 8511), timeout=30):
 
 def main():
     st.set_page_config(page_title="Gestão Infantil", layout="wide")
-    init_db()
-    seed_sample_data()
+    try:
+        init_db()
+    except Exception:
+        logging.exception("Falha ao inicializar o DB")
+    try:
+        seed_sample_data()
+    except Exception:
+        logging.exception("Falha ao rodar seed_sample_data")
 
     if 'user_id' not in st.session_state:
         st.session_state.user_id = None
