@@ -1,14 +1,38 @@
 """Streamlit App: Gestão de Tarefas Infantis"""
 import streamlit as st
 import os
+import time
+import subprocess
 from db import init_db
 from services import (create_user, list_users, update_user_email, create_task, list_tasks, validate_task,
-                      get_conversion, set_conversion, create_debit, get_report, seed_sample_data, save_user_photo)
+                      get_conversion, set_conversion, create_debit, get_report, seed_sample_data, save_user_photo,
+                      authenticate_user, get_user_by_email, update_user_password, list_debits)
 from email_utils import send_email
 
 import logging
 import sys
 import traceback
+import pandas as pd
+import plotly.express as px
+
+
+def safe_rerun():
+    """Tenta usar st.experimental_rerun() quando disponível; caso contrário usa st.stop().
+    Isso evita AttributeError em versões do Streamlit que não expõem experimental_rerun.
+    """
+    try:
+        fn = getattr(st, 'experimental_rerun', None)
+        if callable(fn):
+            fn()
+            return
+    except Exception:
+        pass
+    try:
+        # st.stop() interrompe a execução do script atual e força refresh
+        st.stop()
+    except Exception:
+        # último recurso: raise para que Streamlit mostre erro
+        raise
 
 # Logging setup
 LOG_DIR = os.environ.get('GESTAO_LOGS', 'logs')
@@ -21,9 +45,76 @@ logging.basicConfig(
 )
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
 
+# Evita múltiplos disparos de abertura de navegador em reruns do Streamlit
+_AUTO_BROWSER_STARTED = False
+
 
 def is_role(user, role):
     return role in (user.roles or "").split(',')
+
+
+def _open_local_browser(host='localhost', ports=range(8501, 8511), timeout=30):
+    """Aguarda a porta estar aberta e abre o navegador (uma vez)."""
+    import socket
+    import webbrowser
+    start = time.time()
+    opened = False
+    # Delay inicial para dar tempo do Streamlit iniciar
+    time.sleep(2)
+    logging.debug(f'[AUTO_BROWSER] Starting browser opener thread (timeout={timeout}s)')
+    
+    while time.time() - start < timeout and not opened:
+        for port in ports:
+            try:
+                with socket.create_connection((host, port), timeout=0.5):
+                    url = f'http://{host}:{port}'
+                    logging.info(f'[AUTO_BROWSER] Detected localhost:{port} is open')
+                    try:
+                        if os.name == 'nt':
+                            # Windows: try multiple methods
+                            try:
+                                os.startfile(url)
+                                logging.info(f'[AUTO_BROWSER] Opened browser via os.startfile: {url}')
+                                opened = True
+                                break
+                            except Exception as e:
+                                logging.debug(f'[AUTO_BROWSER] os.startfile failed: {e}')
+                            
+                            # Fallback: cmd start
+                            try:
+                                subprocess.run(["cmd", "/c", "start", "", url], check=False, shell=False)
+                                logging.info(f'[AUTO_BROWSER] Opened browser via cmd start: {url}')
+                                opened = True
+                                break
+                            except Exception as e:
+                                logging.debug(f'[AUTO_BROWSER] cmd start failed: {e}')
+                            
+                            # Fallback: webbrowser
+                            try:
+                                webbrowser.open(url)
+                                logging.info(f'[AUTO_BROWSER] Opened browser via webbrowser.open: {url}')
+                                opened = True
+                                break
+                            except Exception as e:
+                                logging.debug(f'[AUTO_BROWSER] webbrowser.open failed: {e}')
+                        else:
+                            webbrowser.open(url)
+                            logging.info(f'[AUTO_BROWSER] Opened browser via webbrowser.open: {url}')
+                            opened = True
+                            break
+                    except Exception as exc:
+                        logging.exception(f'[AUTO_BROWSER] Failed to open browser at {url}')
+            except Exception:
+                # Port not open yet
+                continue
+        
+        if not opened:
+            time.sleep(0.5)
+    
+    if opened:
+        logging.info('[AUTO_BROWSER] Browser opener thread completed successfully')
+    else:
+        logging.warning('[AUTO_BROWSER] Browser opener thread timed out without opening browser')
 
 
 def main():
@@ -31,209 +122,376 @@ def main():
     init_db()
     seed_sample_data()
 
-    st.title("Gestão de Tarefas Infantis")
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = None
 
+    st.sidebar.title("Autenticação")
+
+    # Login form
+    if not st.session_state.user_id:
+        st.title("Gestão Infantil - Login")
+        with st.form("login_form"):
+            email = st.text_input("E-mail")
+            password = st.text_input("Senha", type="password")
+            submitted = st.form_submit_button("Entrar")
+            if submitted:
+                user = authenticate_user(email, password)
+                if user:
+                    st.session_state.user_id = user.id
+                    safe_rerun()
+                else:
+                    st.error("Credenciais inválidas")
+        st.info("Use as credenciais de exemplo: admin@example.com / 123")
+        return
+
+    # Carregar usuário logado
     users = list_users()
     user_map = {u.id: u for u in users}
+    current_user = user_map.get(st.session_state.user_id)
+    if not current_user:
+        st.session_state.user_id = None
+        safe_rerun()
+        return
 
-    current_user_id = st.sidebar.selectbox("Usuário atual", options=[u.id for u in users], format_func=lambda id: user_map[id].name)
-    current_user = user_map[current_user_id]
+    is_validator = 'validator' in (current_user.roles or '')
+    is_child = 'child' in (current_user.roles or '')
 
-    page = st.sidebar.radio("Página", ['Dashboard','Tarefas','Validar Tarefas','Conversões','Usuários','Débitos','Relatórios','E-mails'])
+    with st.sidebar:
+        # Mostrar foto do usuário logado (se disponível)
+        try:
+            photo_path = photo_or_placeholder(current_user)
+            if photo_path:
+                st.image(photo_path, width=80)
+            else:
+                st.write('Sem foto')
+        except Exception:
+            # não falhar a renderização da sidebar por causa da imagem
+            pass
+        st.markdown(f"**Logado como:** {current_user.name} ({current_user.roles})")
+        if st.button("Sair"):
+            st.session_state.user_id = None
+            safe_rerun()
+        # Disponibilizar páginas conforme o papel: validators veem tudo; children veem Tarefas e Débitos (apenas para si)
+        if is_validator:
+            pages = ['Dashboard','Tarefas','Validar','Débitos','Usuários']
+        elif is_child:
+            pages = ['Dashboard','Tarefas','Débitos']
+        else:
+            pages = ['Dashboard']
+        page = st.radio("Página", pages)
+
+    # Cabeçalho: mostrar foto e nome do usuário logado antes de tudo (acima do título)
+    try:
+        hdr_col1, hdr_col2 = st.columns([1, 8])
+        if getattr(current_user, 'photo', None) and os.path.exists(current_user.photo):
+            hdr_col1.image(current_user.photo, width=64)
+        else:
+            hdr_col1.write('')
+        hdr_col2.markdown(f"**{current_user.name}**")
+    except Exception:
+        pass
+
+    st.title("Gestão de Tarefas Infantis")
+
+    report = get_report()
+    children_report = [r for r in report if 'child' in (r['user'].roles or '')]
+
+    def photo_or_placeholder(u, width=60):
+        if u.photo and os.path.exists(u.photo):
+            return u.photo
+        return None
+
+    def render_balance_charts(children_report):
+        if not children_report:
+            st.info('Nenhuma criança cadastrada.')
+            return
+
+        names = [r['user'].name for r in children_report]
+        photos = [photo_or_placeholder(r['user']) for r in children_report]
+        money_values = [r['money'] for r in children_report]
+        hour_values = [r['hours'] for r in children_report]
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader('Saldo em dinheiro (R$)')
+            fig_money = px.bar(x=names, y=money_values, labels={'x':'Criança','y':'Saldo (R$)'})
+            # Aplicar degradê em tons de azul e exibir rótulos com valores formatados
+            fig_money.update_traces(
+                marker=dict(color=money_values, colorscale='Blues', showscale=False),
+                text=[f"R$ {v:.2f}" for v in money_values],
+                textposition='auto',
+                hovertemplate='%{x}: R$ %{y:.2f}'
+            )
+            fig_money.update_layout(margin=dict(l=10,r=10,b=40,t=10))
+            st.plotly_chart(fig_money, use_container_width=True)
+        with col2:
+            st.subheader('Saldo em horas')
+            fig_hours = px.bar(x=names, y=hour_values, labels={'x':'Criança','y':'Horas'})
+            # Usar degradê azul também para horas e rótulos com unidade
+            fig_hours.update_traces(
+                marker=dict(color=hour_values, colorscale='Blues', showscale=False),
+                text=[f"{v:.2f} h" for v in hour_values],
+                textposition='auto',
+                hovertemplate='%{x}: %{y:.2f} h'
+            )
+            fig_hours.update_layout(margin=dict(l=10,r=10,b=40,t=10))
+            st.plotly_chart(fig_hours, use_container_width=True)
+
+        # (Fotos abaixo dos gráficos removidas por solicitação)
+
+    def render_tables(children_report):
+        st.markdown('---')
+        st.subheader('Tabela de Dinheiro')
+        header = st.columns([1,2,2,2,2])
+        header[0].markdown('**Foto**')
+        header[1].markdown('**Nome**')
+        header[2].markdown('**Realizado (R$)**')
+        header[3].markdown('**Debitado (R$)**')
+        header[4].markdown('**Saldo (R$)**')
+        for r in children_report:
+            u = r['user']
+            row = st.columns([1,2,2,2,2])
+            if photo_or_placeholder(u):
+                row[0].image(photo_or_placeholder(u), width=60)
+            else:
+                row[0].write('—')
+            row[1].write(u.name)
+            row[2].write(f"R$ {r['earned_money']:.2f}")
+            row[3].write(f"R$ {r['debited_money']:.2f}")
+            row[4].write(f"R$ {r['money']:.2f}")
+
+        st.subheader('Tabela de Horas')
+        header = st.columns([1,2,2,2,2])
+        header[0].markdown('**Foto**')
+        header[1].markdown('**Nome**')
+        header[2].markdown('**Realizado (h)**')
+        header[3].markdown('**Debitado (h)**')
+        header[4].markdown('**Saldo (h)**')
+        for r in children_report:
+            u = r['user']
+            row = st.columns([1,2,2,2,2])
+            if photo_or_placeholder(u):
+                row[0].image(photo_or_placeholder(u), width=60)
+            else:
+                row[0].write('—')
+            row[1].write(u.name)
+            row[2].write(f"{r['earned_hours']:.2f} h")
+            row[3].write(f"{r['debited_hours']:.2f} h")
+            row[4].write(f"{r['hours']:.2f} h")
+
+    def render_child_card(r):
+        u = r['user']
+        money = r['money']
+        hours = r['hours']
+        col_photo, col_money, col_hours = st.columns([1,2,2])
+        if u.photo and os.path.exists(u.photo):
+            col_photo.image(u.photo, width=90)
+        else:
+            col_photo.write('Sem foto')
+        col_money.metric("Saldo em R$", f"R$ {money:.2f}")
+        col_hours.metric("Saldo em horas", f"{hours:.2f} h")
+        col_chart1, col_chart2 = st.columns(2)
+        col_chart1.bar_chart(pd.DataFrame({'R$':[money]}, index=['Saldo']))
+        col_chart2.bar_chart(pd.DataFrame({'Horas':[hours]}, index=['Saldo']))
 
     if page == 'Dashboard':
-        st.header("Resumo")
-        report = get_report()
-
-        st.subheader('Crianças — Saldo')
-        children_report = [r for r in report if 'child' in (r['user'].roles or '')]
-        if children_report:
-            header_cols = st.columns([1,2,1,1,1,1,1])
-            header_cols[0].markdown('**Foto**')
-            header_cols[1].markdown('**Nome**')
-            header_cols[2].markdown('**Pontos Validados**')
-            header_cols[3].markdown('**Pontos Debitados**')
-            header_cols[4].markdown('**Saldo (pontos)**')
-            header_cols[5].markdown('**Saldo (R$)**')
-            header_cols[6].markdown('**Saldo (horas)**')
-
-            for r in children_report:
-                cols_row = st.columns([1,2,1,1,1,1,1])
-                u = r['user']
-                if u.photo and os.path.exists(u.photo):
-                    cols_row[0].image(u.photo, width=60)
-                else:
-                    cols_row[0].write('—')
-                cols_row[1].write(u.name)
-                cols_row[2].write(r['points'])
-                cols_row[3].write(r['deducted'])
-                cols_row[4].write(r['balance_points'])
-                cols_row[5].write(r['money'])
-                cols_row[6].write(r['hours'])
+        st.subheader('Saldos por criança')
+        if not children_report:
+            st.info('Nenhuma criança cadastrada.')
         else:
-            st.info('Nenhuma criança encontrada.')
+            render_balance_charts(children_report)
+            render_tables(children_report)
 
-        st.subheader("Incluir Tarefa")
-        with st.form('new_task'):
-            name = st.text_input('Nome da tarefa')
-            points = st.number_input('Pontos', min_value=1, value=1)
-            conv_type = st.selectbox('Conversão', ['money', 'hours'])
-            child = st.selectbox('Para criança', options=[u.id for u in users if 'child' in (u.roles or '')], format_func=lambda id: user_map[id].name)
-            # escolher validador (pais)
-            validators = [u.id for u in users if 'validator' in (u.roles or '')]
-            validator = st.selectbox('Validador', options=validators, format_func=lambda id: user_map[id].name)
-            submitted_by = current_user_id
-            submitted = st.form_submit_button('Registrar tarefa')
-            if submitted:
-                task = create_task(name, int(points), conv_type, child, submitted_by, validator)
-                # Notificações por e-mail: validar e enviar
-                to_candidates = [user_map[submitted_by].email, user_map[validator].email]
-                tos = [e for e in to_candidates if e and '@' in e]
-                if tos:
-                    ok, msg = send_email(tos, f"Nova tarefa registrada: {name}", f"Tarefa: {name}\nPontos: {points}\nPara: {user_map[child].name}")
-                    if ok:
-                        st.success('Tarefa registrada e e-mails enviados.')
-                    else:
-                        st.warning(f'Tarefa registrada, mas envio de e-mail falhou: {msg}')
-                else:
-                    st.info('Tarefa registrada. Nenhum e-mail válido configurado para notificação.')
-        st.header('Todas as tarefas')
-        tasks = list_tasks()
-        for t in tasks:
-            st.write(f"{t.id} - {t.name} | {t.points} pts | Para: {t.child_id} | Validada: {t.validated}")
-
-    elif page == 'Validar Tarefas':
-        st.header('Tarefas pendentes')
-        if not is_role(current_user, 'validator'):
-            st.warning('Você não tem permissão para validar tarefas.')
+    elif page == 'Tarefas':
+        if not (is_validator or is_child):
+            st.warning('Apenas validadores ou crianças podem cadastrar tarefas.')
         else:
-            tasks = list_tasks(validated=False)
-            for t in tasks:
-                st.write(f"ID {t.id} - {t.name} | {t.points} pts | Para: {t.child_id}")
-                if st.button(f'Validar {t.id}', key=f'val_{t.id}'):
-                    validate_task(t.id, current_user_id)
-                    # notificar solicitante (usa get_report importado no topo; evitar import local que causa UnboundLocalError)
-                    send_email([t.submitted_by.email or ''], f"Tarefa validada: {t.name}", f"Sua tarefa {t.name} foi validada.")
-                    st.success('Tarefa validada e notificação enviada (ou simulada).')
+            # filtro por criança (por padrão, child vê seu próprio nome)
+            users_children = [u for u in users if 'child' in (u.roles or '')]
+            options = [None] + [u.id for u in users_children]
+            def fmt(uid):
+                if uid is None:
+                    return 'Todos'
+                return user_map[uid].name
+            default = current_user.id if is_child and not is_validator else None
+            filter_target = st.selectbox('Filtrar por criança', options=options, format_func=fmt, index=options.index(default) if default in options else 0)
 
-    elif page == 'Conversões':
-        st.header('Fatores de Conversão')
-        conv = get_conversion()
-        money = st.number_input('R$ por ponto', value=float(conv.money_per_point), step=0.01)
-        hours = st.number_input('Horas por ponto', value=float(conv.hours_per_point), step=0.01)
-        if st.button('Salvar conversões'):
-            set_conversion(float(money), float(hours))
-            st.success('Conversões atualizadas.')
+            st.subheader('Cadastrar tarefa')
+            with st.form('new_task_form'):
+                name = st.text_input('Nome da tarefa')
+                amount = st.number_input('Valor', min_value=0.0, step=0.5)
+                conv_type = st.selectbox('Tipo', ['money','hours'], format_func=lambda x: 'Dinheiro (R$)' if x=='money' else 'Horas de videogame')
+                # Se for child, somente cadastrar para si; se for validator, escolher criança alvo
+                if is_child and not is_validator:
+                    child = current_user.id
+                    st.write(f'Para criança: {current_user.name}')
+                else:
+                    child = st.selectbox('Para criança', options=[u.id for u in users if 'child' in (u.roles or '')], format_func=lambda id: user_map[id].name)
+                # Quando criado por child, deixar validator None (pendente). Quando criado por validator, registrar submitted_by como validator.
+                submitted_by = current_user.id
+                validator = None if is_child and not is_validator else current_user.id
+                submitted = st.form_submit_button('Registrar tarefa')
+                if submitted:
+                    try:
+                        create_task(name, amount, conv_type, child, submitted_by, validator)
+                        st.success('Tarefa registrada; aguarde validação.')
+                    except Exception as exc:
+                        logging.exception('Erro ao criar tarefa')
+                        st.error(f'Falha ao registrar tarefa: {exc}')
 
-    elif page == 'Usuários':
-        st.header('Cadastro de integrantes')
-        with st.form('new_user'):
-            name = st.text_input('Nome')
-            email = st.text_input('E-mail')
-            roles = st.multiselect('Papeis', options=['child','parent','validator'], default=['child'])
-            photo_file = st.file_uploader('Foto (png/jpg)', type=['png','jpg','jpeg'])
-            submitted = st.form_submit_button('Criar usuário')
-            if submitted:
-                new_user = create_user(name=name, email=email, roles=','.join(roles))
-                if photo_file is not None:
-                    # salvar foto
-                    save_user_photo(new_user.id, photo_file.read(), photo_file.name)
-                st.success('Usuário criado.')
-        st.subheader('Lista de usuários')
-        for u in list_users():
-            cols_main = st.columns([1,4])
-            if u.photo and os.path.exists(u.photo):
-                cols_main[0].image(u.photo, width=100)
-            else:
-                cols_main[0].write('Sem foto')
-            cols_main[1].write(f"{u.id} - {u.name} | {u.email} | {u.roles}")
-            cols = st.columns([1,2])
-            new_email = cols[1].text_input(f'Editar email {u.id}', value=u.email or '', key=f'email_{u.id}')
-            if cols[0].button('Salvar e-mail', key=f'save_email_{u.id}'):
-                update_user_email(u.id, new_email)
-                st.success('E-mail atualizado.')
+            st.subheader('Tarefas registradas')
+            tasks_all = list_tasks()
+            if filter_target is not None:
+                tasks_all = [t for t in tasks_all if t.child_id == filter_target]
+            for t in tasks_all:
+                assignee = user_map[t.child_id].name if t.child_id in user_map else t.child_id
+                status = '✅ Validada' if t.validated else '⏳ Pendente'
+                st.write(f"{t.id} - {t.name} | {t.points} ({'R$' if t.conversion_type=='money' else 'h'}) | Para: {assignee} | {status}")
 
-            # Upload de nova foto
-            photo_edit = st.file_uploader(f'Enviar nova foto para {u.name}', type=['png','jpg','jpeg'], key=f'photo_{u.id}')
-            if photo_edit is not None and st.button(f'Salvar foto {u.id}', key=f'save_photo_{u.id}'):
-                save_user_photo(u.id, photo_edit.read(), photo_edit.name)
-                st.success('Foto atualizada.')
+    elif page == 'Validar':
+        if not is_validator:
+            st.warning('Apenas validadores podem validar tarefas.')
+        else:
+            st.subheader('Tarefas pendentes')
+            pending = list_tasks(validated=False)
+            if not pending:
+                st.info('Nenhuma tarefa pendente.')
+            for t in pending:
+                assignee = user_map[t.child_id].name if t.child_id in user_map else t.child_id
+                col1, col2 = st.columns([3,1])
+                col1.write(f"{t.name} | {t.points} ({'R$' if t.conversion_type=='money' else 'h'}) | Para: {assignee}")
+                if col2.button('Validar', key=f'val_{t.id}'):
+                    try:
+                        validate_task(t.id, current_user.id)
+                        st.success('Tarefa validada.')
+                        safe_rerun()
+                    except Exception as exc:
+                        logging.exception('Erro ao validar tarefa')
+                        st.error(f'Falha ao validar tarefa: {exc}')
 
     elif page == 'Débitos':
-        st.header('Realizar débito')
-        # Permissão unificada: validators também podem realizar débitos (antes existia 'debiter')
-        if not is_role(current_user, 'validator') and not is_role(current_user, 'parent'):
-            st.warning('Você não tem permissão para realizar débitos.')
+        if not (is_validator or is_child):
+            st.warning('Apenas validadores ou crianças podem registrar débitos.')
         else:
+            st.subheader('Registrar débito')
             users_children = [u for u in users if 'child' in (u.roles or '')]
-            target = st.selectbox('Criança', options=[u.id for u in users_children], format_func=lambda id: user_map[id].name)
-            amount_money = st.number_input('Valor (R$)', min_value=0.0, step=0.5)
-            amount_hours = st.number_input('Horas', min_value=0.0, step=0.1)
-            reason = st.text_input('Motivo')
+            # filtro para visualização/seleção: children list + Todos
+            options = [None] + [u.id for u in users_children]
+            def fmt_deb(uid):
+                if uid is None:
+                    return 'Todos'
+                return user_map[uid].name
+            default_deb = current_user.id if is_child and not is_validator else None
+            view_filter = st.selectbox('Filtrar débitos por criança', options=options, format_func=fmt_deb, index=options.index(default_deb) if default_deb in options else 0)
+
+            # Form para registrar débito (se child: só para si; se validator: pode escolher)
+            if is_child and not is_validator:
+                target = current_user.id
+                st.write(f'Débito será registrado para: {current_user.name}')
+            else:
+                target = st.selectbox('Criança (alvo do débito)', options=[u.id for u in users_children], format_func=lambda id: user_map[id].name)
+            amount_money = st.number_input('Valor (R$)', min_value=0.0, step=0.5, key='deb_money')
+            amount_hours = st.number_input('Horas', min_value=0.0, step=0.1, key='deb_hours')
+            reason = st.text_input('Motivo', key='deb_reason')
             if st.button('Confirmar débito'):
-                conv = get_conversion()
-                # converter para pontos equivalentes
-                points_from_money = int(amount_money / conv.money_per_point) if amount_money else 0
-                points_from_hours = int(amount_hours / conv.hours_per_point) if amount_hours else 0
-                points = points_from_money + points_from_hours
-                if points <= 0:
-                    st.warning('Valor/hora inválidos (resulta em 0 pontos).')
-                else:
-                    create_debit(user_id=target, points=points, money=amount_money or None, hours=amount_hours or None, reason=reason, performed_by_id=current_user_id)
-                    st.success('Débito realizado e registrado.')
+                try:
+                    create_debit(user_id=target, points=0, money=amount_money or None, hours=amount_hours or None, reason=reason, performed_by_id=current_user.id)
+                    st.success('Débito registrado.')
+                except Exception as exc:
+                    logging.exception('Falha ao registrar débito')
+                    st.error(f'Erro ao registrar débito: {exc}')
 
-    elif page == 'Relatórios':
-        st.header('Relatórios financeiros e de horas')
-        report = get_report()
-        st.table([{
-            'Nome': r['user'].name,
-            'Saldo pontos': r['balance_points'],
-            'Saldo R$': r['money'],
-            'Saldo horas': r['hours']
-        } for r in report])
+            # Mostrar débitos conforme filtro
+            st.markdown('---')
+            st.subheader('Débitos registrados')
+            debs = list_debits(user_id=view_filter)
+            if not debs:
+                st.info('Nenhum débito encontrado para o filtro selecionado.')
+            else:
+                for d in debs:
+                    who = user_map[d.user_id].name if d.user_id in user_map else d.user_id
+                    by = user_map[d.performed_by_id].name if d.performed_by_id in user_map else d.performed_by_id
+                    parts = []
+                    if d.money_amount:
+                        parts.append(f"R$ {d.money_amount:.2f}")
+                    if d.hours_amount:
+                        parts.append(f"{d.hours_amount:.2f} h")
+                    pts = ', '.join(parts) if parts else '—'
+                    st.write(f"{d.id} | Para: {who} | Valor: {pts} | Por: {by} | Motivo: {d.reason or '-'} | {d.created_at}")
 
-    elif page == 'E-mails':
-        st.header('Configurar e-mails dos responsáveis')
-        st.write('Edite os e-mails dos responsáveis para receber notificações.')
-        for u in list_users():
-            if 'parent' in (u.roles or '') or 'validator' in (u.roles or ''):
-                cols = st.columns([2,1])
-                email = cols[0].text_input(f'E-mail {u.name}', value=u.email or '', key=f'email_edit_{u.id}')
-                if cols[1].button('Salvar', key=f'save_em_{u.id}'):
-                    update_user_email(u.id, email)
-                    st.success('E-mail atualizado.')
-
-        st.markdown('---')
-        st.subheader('Configurar / Testar SMTP')
-        import email_utils as eu
-        smtp_configured = False
-        try:
-            smtp_configured = bool(getattr(st, 'secrets', None) and st.secrets.get('smtp'))
-        except Exception:
-            smtp_configured = False
-
-        st.write('Status SMTP: ', '✅ Configurado' if smtp_configured else '⚠️ Não configurado')
-        if smtp_configured:
-            if st.button('Testar conexão SMTP'):
-                ok, msg = eu.test_smtp_connection()
-                if ok:
-                    st.success(msg)
-                else:
-                    st.error(msg)
-
-            # Enviar e-mail de teste
-            test_to = st.text_input('Enviar e-mail de teste para', value='')
-            if st.button('Enviar e-mail de teste'):
-                if not test_to:
-                    st.warning('Informe um e-mail de destino válido.')
-                else:
-                    ok, msg = eu.send_email(test_to, 'Teste de e-mail - Gestão Infantil', 'Esta é uma mensagem de teste.')
-                    if ok:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
+    elif page == 'Usuários':
+        if not is_validator:
+            st.warning('Apenas validadores podem gerenciar usuários.')
         else:
-            st.info('Configure `st.secrets["smtp"]` para habilitar envio real de e-mails. veja README para instruções.')
+            st.subheader('Criar usuário')
+            with st.form('new_user'):
+                name = st.text_input('Nome')
+                email = st.text_input('E-mail')
+                role = st.selectbox('Papel', ['child','validator'], format_func=lambda x: 'Child' if x=='child' else 'Validador')
+                password = st.text_input('Senha', type='password')
+                photo_file = st.file_uploader('Foto (png/jpg)', type=['png','jpg','jpeg'])
+                submitted = st.form_submit_button('Criar usuário')
+                if submitted:
+                    new_user = create_user(name=name, email=email, roles=role, password=password)
+                    if photo_file is not None:
+                        save_user_photo(new_user.id, photo_file.read(), photo_file.name)
+                    st.success('Usuário criado.')
+
+            st.subheader('Lista de usuários')
+            for u in list_users():
+                cols_main = st.columns([1,4,1])
+                if u.photo and os.path.exists(u.photo):
+                    cols_main[0].image(u.photo, width=80)
+                else:
+                    cols_main[0].write('Sem foto')
+                cols_main[1].write(f"{u.name} | {u.email or 'sem e-mail'} | {u.roles}")
+                # Ações: editar e excluir (com confirmação)
+                with cols_main[2]:
+                    with st.expander('Ações'):
+                        new_email = st.text_input(f'Editar email {u.id}', value=u.email or '', key=f'email_{u.id}')
+                        if st.button('Salvar e-mail', key=f'save_email_{u.id}'):
+                            update_user_email(u.id, new_email)
+                            st.success('E-mail atualizado.')
+
+                        # Trocar senha
+                        st.markdown('---')
+                        new_pwd = st.text_input(f'Nova senha para {u.name} (deixe em branco para manter)', type='password', key=f'pwd_{u.id}')
+                        if new_pwd and st.button('Alterar senha', key=f'chg_pwd_{u.id}'):
+                            try:
+                                update_user_password(u.id, new_pwd)
+                                st.success('Senha atualizada com sucesso.')
+                            except Exception as exc:
+                                logging.exception('Falha ao atualizar senha do usuário')
+                                st.error(f'Erro ao atualizar senha: {exc}')
+
+                        st.markdown('---')
+                        st.write('Excluir usuário (irrevogável)')
+                        confirm = st.checkbox('Confirmar exclusão', key=f'confirm_{u.id}')
+                        if confirm and st.button('Excluir usuário', key=f'delete_{u.id}'):
+                            # remover foto do disco se existir
+                            try:
+                                if u.photo and os.path.exists(u.photo):
+                                    os.remove(u.photo)
+                            except Exception:
+                                logging.exception('Falha ao remover foto do usuário')
+                            from services import delete_user
+                            ok = delete_user(u.id)
+                            if ok:
+                                st.success('Usuário excluído com sucesso.')
+                                # Se o usuário excluído for o que está logado, encerrar sessão e forçar rerun.
+                                try:
+                                    if st.session_state.get('user_id') == u.id:
+                                        st.session_state.user_id = None
+                                        safe_rerun()
+                                    else:
+                                        # Para exclusão de terceiros, não resetar sessão do usuário atual.
+                                        # A atualização da lista ocorrerá naturalmente na próxima interação.
+                                        pass
+                                except Exception:
+                                    # fallback: não forçar logout de outros usuários
+                                    pass
+                            else:
+                                st.error('Falha ao excluir usuário.')
 
 
 if __name__ == '__main__':
@@ -242,6 +500,5 @@ if __name__ == '__main__':
         main()
     except Exception:
         logging.exception("Unhandled exception running app")
-        import sys, traceback
         traceback.print_exc(file=sys.stderr)
         raise

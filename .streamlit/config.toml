@@ -1,4 +1,4 @@
 [server]
-headless = true
+headless = false  # Permite que o Streamlit abra o navegador automaticamente no ambiente local
 # port = $PORT  # Comentado para evitar erro local. Streamlit Cloud define automaticamente a porta.
 enableCORS = false

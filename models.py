@@ -11,7 +11,8 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     email = Column(String, nullable=True)
-    roles = Column(String, default="child")  # 'child', 'parent', 'validator', 'debiter' (comma separated)
+    roles = Column(String, default="child")  # 'child' ou 'validator'
+    password_hash = Column(String, nullable=True)
     photo = Column(String, nullable=True)  # caminho para arquivo de foto (uploads/users/...)
 
     submitted_tasks = relationship("Task", back_populates="submitted_by", foreign_keys='Task.submitted_by_id')
@@ -29,7 +30,7 @@ class Task(Base):
     __tablename__ = "tasks"
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
-    points = Column(Integer, nullable=False)
+    points = Column(Float, nullable=False)  # valor em dinheiro ou horas, depende de conversion_type
     conversion_type = Column(String, nullable=False)  # 'money' or 'hours'
 
     child_id = Column(Integer, ForeignKey("users.id"), nullable=False)

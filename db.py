@@ -5,6 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 import os
+import logging
 
 DB_FILENAME = os.environ.get("GESTAO_DB", "gestaoinfantil.db")
 DB_URL = f"sqlite:///{DB_FILENAME}"
@@ -12,6 +13,13 @@ DB_URL = f"sqlite:///{DB_FILENAME}"
 engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+# Logger para depuração de persistência
+logger = logging.getLogger(__name__)
+try:
+    logger.info(f"DB_URL={DB_URL} DB_FILENAME_ABS={os.path.abspath(DB_FILENAME)}")
+except Exception:
+    pass
 
 
 from sqlalchemy import text
@@ -22,6 +30,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     # migração simples: adicionar coluna `photo` em users se não existir
     ensure_user_photo_column()
+    ensure_user_password_column()
 
 
 def ensure_user_photo_column():
@@ -39,5 +48,18 @@ def ensure_user_photo_column():
         pass
 
 
+def ensure_user_password_column():
+    """Adiciona coluna password_hash se ausente."""
+    try:
+        with engine.connect() as conn:
+            res = conn.execute(text("PRAGMA table_info(users);"))
+            cols = [row[1] for row in res.fetchall()]
+            if "password_hash" not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN password_hash TEXT;"))
+    except Exception:
+        pass
+
+
 def get_session():
+    logger.debug(f"Abrindo sessão DB para {DB_URL}")
     return SessionLocal()

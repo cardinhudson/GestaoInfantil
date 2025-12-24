@@ -1,4 +1,7 @@
-streamlit
-SQLAlchemy
+streamlit>=1.0
+SQLAlchemy>=1.4
 pydantic
 python-dotenv
+plotly
+pandas
+email-validator
