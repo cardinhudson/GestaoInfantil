@@ -58,6 +58,12 @@ def _log_uncaught_exceptions(exctype, value, tb):
 
 sys.excepthook = _log_uncaught_exceptions
 
+# Marca de importação para ajudar a diagnosticar se o arquivo é carregado corretamente
+try:
+    logging.info('app.py imported — starting module initialization')
+except Exception:
+    pass
+
 # Evita múltiplos disparos de abertura de navegador em reruns do Streamlit
 _AUTO_BROWSER_STARTED = False
 

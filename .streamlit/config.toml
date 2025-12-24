@@ -1,4 +1,10 @@
 [server]
-headless = false  # Permite que o Streamlit abra o navegador automaticamente no ambiente local
-# port = $PORT  # Comentado para evitar erro local. Streamlit Cloud define automaticamente a porta.
+# Forçar modo headless em deploys (evita prompt interativo)
+headless = true
+port = 8501
+address = "0.0.0.0"
 enableCORS = false
+
+[global]
+# Best-effort: evitar prompts interativos de onboarding
+hideOnboarding = true
