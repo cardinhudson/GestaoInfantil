@@ -1,10 +1,11 @@
 [server]
+
 # Forçar modo headless em deploys (evita prompt interativo)
 headless = true
 port = 8501
 address = "0.0.0.0"
-enableCORS = false
+enableCORS = true
 
 [global]
 # Best-effort: evitar prompts interativos de onboarding
-hideOnboarding = true
+# hideOnboarding = true  # Removido: opção inválida

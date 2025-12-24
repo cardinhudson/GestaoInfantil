@@ -34,6 +34,25 @@ def safe_rerun():
         # último recurso: raise para que Streamlit mostre erro
         raise
 
+
+def _open_browser():
+    """Tenta abrir o navegador no localhost:8501 após um delay."""
+    import time
+    import webbrowser
+    import subprocess
+    import os
+    time.sleep(2)  # Aguarda o servidor iniciar
+    url = 'http://localhost:8501'
+    try:
+        if os.name == 'nt':  # Windows
+            subprocess.run(['cmd', '/c', 'start', url], check=False, shell=False)
+        else:
+            webbrowser.open(url)
+        logging.info(f'Navegador aberto automaticamente em {url}')
+    except Exception as e:
+        logging.debug(f'Falha ao abrir navegador: {e}')
+
+
 # Logging setup
 LOG_DIR = os.environ.get('GESTAO_LOGS', 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -79,72 +98,21 @@ def is_role(user, role):
     return role in (user.roles or "").split(',')
 
 
-def _open_local_browser(host='localhost', ports=range(8501, 8511), timeout=30):
-    """Aguarda a porta estar aberta e abre o navegador (uma vez)."""
-    import socket
-    import webbrowser
-    start = time.time()
-    opened = False
-    # Delay inicial para dar tempo do Streamlit iniciar
-    time.sleep(2)
-    logging.debug(f'[AUTO_BROWSER] Starting browser opener thread (timeout={timeout}s)')
-    
-    while time.time() - start < timeout and not opened:
-        for port in ports:
-            try:
-                with socket.create_connection((host, port), timeout=0.5):
-                    url = f'http://{host}:{port}'
-                    logging.info(f'[AUTO_BROWSER] Detected localhost:{port} is open')
-                    try:
-                        if os.name == 'nt':
-                            # Windows: try multiple methods
-                            try:
-                                os.startfile(url)
-                                logging.info(f'[AUTO_BROWSER] Opened browser via os.startfile: {url}')
-                                opened = True
-                                break
-                            except Exception as e:
-                                logging.debug(f'[AUTO_BROWSER] os.startfile failed: {e}')
-                            
-                            # Fallback: cmd start
-                            try:
-                                subprocess.run(["cmd", "/c", "start", "", url], check=False, shell=False)
-                                logging.info(f'[AUTO_BROWSER] Opened browser via cmd start: {url}')
-                                opened = True
-                                break
-                            except Exception as e:
-                                logging.debug(f'[AUTO_BROWSER] cmd start failed: {e}')
-                            
-                            # Fallback: webbrowser
-                            try:
-                                webbrowser.open(url)
-                                logging.info(f'[AUTO_BROWSER] Opened browser via webbrowser.open: {url}')
-                                opened = True
-                                break
-                            except Exception as e:
-                                logging.debug(f'[AUTO_BROWSER] webbrowser.open failed: {e}')
-                        else:
-                            webbrowser.open(url)
-                            logging.info(f'[AUTO_BROWSER] Opened browser via webbrowser.open: {url}')
-                            opened = True
-                            break
-                    except Exception as exc:
-                        logging.exception(f'[AUTO_BROWSER] Failed to open browser at {url}')
-            except Exception:
-                # Port not open yet
-                continue
-        
-        if not opened:
-            time.sleep(0.5)
-    
-    if opened:
-        logging.info('[AUTO_BROWSER] Browser opener thread completed successfully')
-    else:
-        logging.warning('[AUTO_BROWSER] Browser opener thread timed out without opening browser')
+def _open_local_browser(*args, **kwargs):
+    pass
 
 
 def main():
     st.set_page_config(page_title="Gestão Infantil", layout="wide")
+
+    # Tenta abrir o navegador automaticamente (uma vez por sessão)
+    if not getattr(st.session_state, '_browser_opened', False):
+        st.session_state._browser_opened = True
+        import threading
+        threading.Thread(target=_open_browser, daemon=True).start()
+
+    # ...existing code...
+
     try:
         init_db()
     except Exception:
