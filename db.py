@@ -1,8 +1,8 @@
-"""SQLite database helpers used across the application.
+"""Database helpers supporting SQLite (local) and Postgres (cloud persistence).
 
-This module intentionally relies on the standard ``sqlite3`` module so that the
-same codepath is executed locally and on Streamlit Cloud, ensuring that the
-database file is created, reused, and committed safely on every operation.
+If GESTAO_DB / DATABASE_URL starts with postgres, we connect to Postgres using
+psycopg2. Otherwise we default to a local SQLite file. Both backends expose the
+same get_connection() API and init_db() creates the required tables.
 """
 import logging
 import os
@@ -31,79 +31,143 @@ def _get_db_target_from_env() -> Optional[str]:
     return None
 
 
-def _resolve_sqlite_path() -> Path:
-    target = _get_db_target_from_env() or "gestaoinfantil.db"
-    if target.startswith("sqlite://"):
-        target = target.replace("sqlite://", "", 1).lstrip("/")
-    path = Path(target)
+def _resolve_sqlite_path(target: Optional[str]) -> Path:
+    name = target or "gestaoinfantil.db"
+    if name.startswith("sqlite://"):
+        name = name.replace("sqlite://", "", 1).lstrip("/")
+    path = Path(name)
     if not path.is_absolute():
         path = Path(os.getcwd()).joinpath(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     return path.resolve()
 
 
-DB_PATH = _resolve_sqlite_path()
-logger.info(f"Using SQLite database at {DB_PATH}")
+DB_TARGET = _get_db_target_from_env()
+DB_KIND = "pg" if DB_TARGET and DB_TARGET.startswith("postgres") else "sqlite"
+
+if DB_KIND == "sqlite":
+    DB_PATH = _resolve_sqlite_path(DB_TARGET)
+    logger.info(f"Using SQLite database at {DB_PATH}")
+else:
+    DB_PATH = None
+    logger.info("Using Postgres database via GESTAO_DB/DATABASE_URL")
 
 
-def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, detect_types=sqlite3.PARSE_DECLTYPES)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")
+def get_connection():
+    if DB_KIND == "sqlite":
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA journal_mode = WAL;")
+        return conn
+    # Postgres
+    import psycopg2
+    import psycopg2.extras
+    conn = psycopg2.connect(DB_TARGET, cursor_factory=psycopg2.extras.RealDictCursor)
     return conn
 
 
 def init_db():
     conn = get_connection()
     try:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT,
-                roles TEXT NOT NULL DEFAULT 'child',
-                password_hash TEXT,
-                photo TEXT
-            );
+        if DB_KIND == "sqlite":
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    email TEXT,
+                    roles TEXT NOT NULL DEFAULT 'child',
+                    password_hash TEXT,
+                    photo TEXT
+                );
 
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                points REAL NOT NULL,
-                conversion_type TEXT NOT NULL,
-                child_id INTEGER NOT NULL,
-                submitted_by_id INTEGER,
-                validator_id INTEGER,
-                validated INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                validated_at TEXT,
-                FOREIGN KEY(child_id) REFERENCES users(id) ON DELETE CASCADE,
-                FOREIGN KEY(submitted_by_id) REFERENCES users(id),
-                FOREIGN KEY(validator_id) REFERENCES users(id)
-            );
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    points REAL NOT NULL,
+                    conversion_type TEXT NOT NULL,
+                    child_id INTEGER NOT NULL,
+                    submitted_by_id INTEGER,
+                    validator_id INTEGER,
+                    validated INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    validated_at TEXT,
+                    FOREIGN KEY(child_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY(submitted_by_id) REFERENCES users(id),
+                    FOREIGN KEY(validator_id) REFERENCES users(id)
+                );
 
-            CREATE TABLE IF NOT EXISTS conversions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                money_per_point REAL NOT NULL DEFAULT 0.5,
-                hours_per_point REAL NOT NULL DEFAULT 0.1
-            );
+                CREATE TABLE IF NOT EXISTS conversions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    money_per_point REAL NOT NULL DEFAULT 0.5,
+                    hours_per_point REAL NOT NULL DEFAULT 0.1
+                );
 
-            CREATE TABLE IF NOT EXISTS debits (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                points_deducted INTEGER NOT NULL DEFAULT 0,
-                money_amount REAL,
-                hours_amount REAL,
-                reason TEXT,
-                performed_by_id INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-                FOREIGN KEY(performed_by_id) REFERENCES users(id)
-            );
-            """
-        )
+                CREATE TABLE IF NOT EXISTS debits (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    points_deducted INTEGER NOT NULL DEFAULT 0,
+                    money_amount REAL,
+                    hours_amount REAL,
+                    reason TEXT,
+                    performed_by_id INTEGER,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY(performed_by_id) REFERENCES users(id)
+                );
+                """
+            )
+        else:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    email TEXT,
+                    roles TEXT NOT NULL DEFAULT 'child',
+                    password_hash TEXT,
+                    photo TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    points DOUBLE PRECISION NOT NULL,
+                    conversion_type TEXT NOT NULL,
+                    child_id INTEGER NOT NULL,
+                    submitted_by_id INTEGER,
+                    validator_id INTEGER,
+                    validated BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    validated_at TIMESTAMP WITH TIME ZONE,
+                    CONSTRAINT fk_child FOREIGN KEY(child_id) REFERENCES users(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_submitted FOREIGN KEY(submitted_by_id) REFERENCES users(id),
+                    CONSTRAINT fk_validator FOREIGN KEY(validator_id) REFERENCES users(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS conversions (
+                    id SERIAL PRIMARY KEY,
+                    money_per_point DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+                    hours_per_point DOUBLE PRECISION NOT NULL DEFAULT 0.1
+                );
+
+                CREATE TABLE IF NOT EXISTS debits (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    points_deducted INTEGER NOT NULL DEFAULT 0,
+                    money_amount DOUBLE PRECISION,
+                    hours_amount DOUBLE PRECISION,
+                    reason TEXT,
+                    performed_by_id INTEGER,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    CONSTRAINT fk_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_performed FOREIGN KEY(performed_by_id) REFERENCES users(id)
+                );
+                """
+            )
+            cur.close()
         conn.commit()
     finally:
         conn.close()

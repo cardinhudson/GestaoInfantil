@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from db import get_connection
+from db import DB_KIND, get_connection
 from models import Conversion, Debit, Task, User
 
 logger = logging.getLogger(__name__)
@@ -74,6 +74,18 @@ def _row_to_conversion(row) -> Optional[Conversion]:
 def create_user(name: str, email: str = None, roles: str = "child", password: str = None) -> User:
     conn = get_connection()
     try:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO users (name, email, roles, password_hash) VALUES (%s, %s, %s, %s) RETURNING id",
+                (name, email, roles, hash_password(password) if password else None),
+            )
+            user_id = cur.fetchone()[0]
+            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            fetched = cur.fetchone()
+            cur.close()
+            conn.commit()
+            return _row_to_user(fetched)
         cursor = conn.execute(
             "INSERT INTO users (name, email, roles, password_hash) VALUES (?, ?, ?, ?)",
             (name, email, roles, hash_password(password) if password else None),
@@ -89,7 +101,13 @@ def create_user(name: str, email: str = None, roles: str = "child", password: st
 def list_users() -> List[User]:
     conn = get_connection()
     try:
-        rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM users ORDER BY id")
+            rows = cur.fetchall()
+            cur.close()
+        else:
+            rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
         return [_row_to_user(row) for row in rows]
     finally:
         conn.close()
@@ -98,6 +116,14 @@ def list_users() -> List[User]:
 def update_user_email(user_id: int, new_email: str) -> Optional[User]:
     conn = get_connection()
     try:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET email = %s WHERE id = %s", (new_email, user_id))
+            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+            cur.close()
+            conn.commit()
+            return _row_to_user(row)
         conn.execute("UPDATE users SET email = ? WHERE id = ?", (new_email, user_id))
         conn.commit()
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -109,6 +135,16 @@ def update_user_email(user_id: int, new_email: str) -> Optional[User]:
 def update_user_password(user_id: int, new_password: str) -> Optional[User]:
     conn = get_connection()
     try:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (hash_password(new_password), user_id))
+            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+            cur.close()
+            conn.commit()
+            if row:
+                logger.info("Senha atualizada para user_id=%s", user_id)
+            return _row_to_user(row)
         conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(new_password), user_id))
         conn.commit()
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -124,6 +160,12 @@ def get_user_by_email(email: str) -> Optional[User]:
         return None
     conn = get_connection()
     try:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM users WHERE LOWER(email) = LOWER(%s)", (email,))
+            row = cur.fetchone()
+            cur.close()
+            return _row_to_user(row)
         row = conn.execute("SELECT * FROM users WHERE LOWER(email) = LOWER(?)", (email,)).fetchone()
         return _row_to_user(row)
     finally:
@@ -133,6 +175,21 @@ def get_user_by_email(email: str) -> Optional[User]:
 def delete_user(user_id: int) -> bool:
     conn = get_connection()
     try:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM tasks WHERE child_id = %s OR submitted_by_id = %s OR validator_id = %s",
+                (user_id, user_id, user_id),
+            )
+            cur.execute(
+                "DELETE FROM debits WHERE user_id = %s OR performed_by_id = %s",
+                (user_id, user_id),
+            )
+            cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            deleted = cur.rowcount > 0
+            cur.close()
+            conn.commit()
+            return deleted
         conn.execute(
             "DELETE FROM tasks WHERE child_id = ? OR submitted_by_id = ? OR validator_id = ?",
             (user_id, user_id, user_id),
@@ -160,16 +217,30 @@ def authenticate_user(email: str, password: str) -> Optional[User]:
 def create_task(name: str, amount: float, conversion_type: str, child_id: int, submitted_by_id: int, validator_id: int = None) -> Task:
     conn = get_connection()
     try:
-        cursor = conn.execute(
-            """
-            INSERT INTO tasks (name, points, conversion_type, child_id, submitted_by_id, validator_id, validated)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (name, float(amount), conversion_type, child_id, submitted_by_id, validator_id, 0),
-        )
-        conn.commit()
-        task_id = cursor.lastrowid
-        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO tasks (name, points, conversion_type, child_id, submitted_by_id, validator_id, validated)
+                VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
+                """,
+                (name, float(amount), conversion_type, child_id, submitted_by_id, validator_id, False),
+            )
+            task_id = cur.fetchone()[0]
+            cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+            row = cur.fetchone()
+            cur.close()
+        else:
+            cursor = conn.execute(
+                """
+                INSERT INTO tasks (name, points, conversion_type, child_id, submitted_by_id, validator_id, validated)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (name, float(amount), conversion_type, child_id, submitted_by_id, validator_id, 0),
+            )
+            conn.commit()
+            task_id = cursor.lastrowid
+            row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         task = _row_to_task(row)
         if task:
             logger.info(
@@ -180,6 +251,8 @@ def create_task(name: str, amount: float, conversion_type: str, child_id: int, s
                 task.points,
                 conversion_type,
             )
+        if DB_KIND == "pg":
+            conn.commit()
         return task
     finally:
         conn.close()
@@ -188,13 +261,22 @@ def create_task(name: str, amount: float, conversion_type: str, child_id: int, s
 def list_tasks(validated: bool = None) -> List[Task]:
     conn = get_connection()
     try:
-        if validated is None:
-            rows = conn.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            if validated is None:
+                cur.execute("SELECT * FROM tasks ORDER BY created_at DESC")
+            else:
+                cur.execute("SELECT * FROM tasks WHERE validated = %s ORDER BY created_at DESC", (validated,))
+            rows = cur.fetchall()
+            cur.close()
         else:
-            rows = conn.execute(
-                "SELECT * FROM tasks WHERE validated = ? ORDER BY created_at DESC",
-                (1 if validated else 0,),
-            ).fetchall()
+            if validated is None:
+                rows = conn.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM tasks WHERE validated = ? ORDER BY created_at DESC",
+                    (1 if validated else 0,),
+                ).fetchall()
         return [_row_to_task(row) for row in rows]
     finally:
         conn.close()
@@ -203,22 +285,47 @@ def list_tasks(validated: bool = None) -> List[Task]:
 def validate_task(task_id: int, validator_id: int) -> Optional[Task]:
     conn = get_connection()
     try:
-        now = datetime.utcnow().isoformat()
-        conn.execute(
-            "UPDATE tasks SET validated = 1, validator_id = ?, validated_at = ? WHERE id = ?",
-            (validator_id, now, task_id),
-        )
-        conn.commit()
-        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        now = datetime.utcnow()
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE tasks SET validated = TRUE, validator_id = %s, validated_at = %s WHERE id = %s",
+                (validator_id, now, task_id),
+            )
+            cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+            row = cur.fetchone()
+            cur.close()
+        else:
+            conn.execute(
+                "UPDATE tasks SET validated = 1, validator_id = ?, validated_at = ? WHERE id = ?",
+                (validator_id, now.isoformat(), task_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         task = _row_to_task(row)
         if task:
             logger.info("Tarefa validada id=%s por=%s", task.id, validator_id)
+        if DB_KIND == "pg":
+            conn.commit()
         return task
     finally:
         conn.close()
 
 
 def ensure_conversion_exists(conn) -> Conversion:
+    if DB_KIND == "pg":
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM conversions LIMIT 1")
+        row = cur.fetchone()
+        if row:
+            cur.close()
+            return _row_to_conversion(row)
+        cur.execute("INSERT INTO conversions (money_per_point, hours_per_point) VALUES (%s, %s) RETURNING id", (0.5, 0.1))
+        conn.commit()
+        cur.execute("SELECT * FROM conversions LIMIT 1")
+        row = cur.fetchone()
+        cur.close()
+        return _row_to_conversion(row)
     row = conn.execute("SELECT * FROM conversions LIMIT 1").fetchone()
     if row:
         return _row_to_conversion(row)
@@ -239,6 +346,23 @@ def get_conversion() -> Conversion:
 def set_conversion(money_per_point: float, hours_per_point: float) -> Conversion:
     conn = get_connection()
     try:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM conversions LIMIT 1")
+            row = cur.fetchone()
+            if row:
+                cur.execute(
+                    "UPDATE conversions SET money_per_point = %s, hours_per_point = %s WHERE id = %s",
+                    (money_per_point, hours_per_point, row["id"]),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO conversions (money_per_point, hours_per_point) VALUES (%s, %s)",
+                    (money_per_point, hours_per_point),
+                )
+            cur.close()
+            conn.commit()
+            return ensure_conversion_exists(conn)
         row = conn.execute("SELECT id FROM conversions LIMIT 1").fetchone()
         if row:
             conn.execute(
@@ -266,6 +390,21 @@ def create_debit(
 ) -> Debit:
     conn = get_connection()
     try:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO debits (user_id, points_deducted, money_amount, hours_amount, reason, performed_by_id)
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+                """,
+                (user_id, points or 0, money, hours, reason, performed_by_id),
+            )
+            debit_id = cur.fetchone()[0]
+            cur.execute("SELECT * FROM debits WHERE id = %s", (debit_id,))
+            row = cur.fetchone()
+            cur.close()
+            conn.commit()
+            return _row_to_debit(row)
         cursor = conn.execute(
             """
             INSERT INTO debits (user_id, points_deducted, money_amount, hours_amount, reason, performed_by_id)
@@ -284,13 +423,22 @@ def create_debit(
 def list_debits(user_id: int = None) -> List[Debit]:
     conn = get_connection()
     try:
-        if user_id is None:
-            rows = conn.execute("SELECT * FROM debits ORDER BY created_at DESC").fetchall()
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            if user_id is None:
+                cur.execute("SELECT * FROM debits ORDER BY created_at DESC")
+            else:
+                cur.execute("SELECT * FROM debits WHERE user_id = %s ORDER BY created_at DESC", (user_id,))
+            rows = cur.fetchall()
+            cur.close()
         else:
-            rows = conn.execute(
-                "SELECT * FROM debits WHERE user_id = ? ORDER BY created_at DESC",
-                (user_id,),
-            ).fetchall()
+            if user_id is None:
+                rows = conn.execute("SELECT * FROM debits ORDER BY created_at DESC").fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM debits WHERE user_id = ? ORDER BY created_at DESC",
+                    (user_id,),
+                ).fetchall()
         return [_row_to_debit(row) for row in rows]
     finally:
         conn.close()
@@ -300,18 +448,34 @@ def get_report() -> List[Dict[str, float]]:
     conn = get_connection()
     try:
         users = list_users()
-        money_rows = conn.execute(
-            "SELECT child_id, SUM(points) AS total FROM tasks WHERE validated = 1 AND conversion_type = 'money' GROUP BY child_id"
-        ).fetchall()
-        hours_rows = conn.execute(
-            "SELECT child_id, SUM(points) AS total FROM tasks WHERE validated = 1 AND conversion_type = 'hours' GROUP BY child_id"
-        ).fetchall()
-        deb_money_rows = conn.execute(
-            "SELECT user_id, SUM(money_amount) AS total FROM debits GROUP BY user_id"
-        ).fetchall()
-        deb_hours_rows = conn.execute(
-            "SELECT user_id, SUM(hours_amount) AS total FROM debits GROUP BY user_id"
-        ).fetchall()
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT child_id, SUM(points) AS total FROM tasks WHERE validated = TRUE AND conversion_type = 'money' GROUP BY child_id"
+            )
+            money_rows = cur.fetchall()
+            cur.execute(
+                "SELECT child_id, SUM(points) AS total FROM tasks WHERE validated = TRUE AND conversion_type = 'hours' GROUP BY child_id"
+            )
+            hours_rows = cur.fetchall()
+            cur.execute("SELECT user_id, SUM(money_amount) AS total FROM debits GROUP BY user_id")
+            deb_money_rows = cur.fetchall()
+            cur.execute("SELECT user_id, SUM(hours_amount) AS total FROM debits GROUP BY user_id")
+            deb_hours_rows = cur.fetchall()
+            cur.close()
+        else:
+            money_rows = conn.execute(
+                "SELECT child_id, SUM(points) AS total FROM tasks WHERE validated = 1 AND conversion_type = 'money' GROUP BY child_id"
+            ).fetchall()
+            hours_rows = conn.execute(
+                "SELECT child_id, SUM(points) AS total FROM tasks WHERE validated = 1 AND conversion_type = 'hours' GROUP BY child_id"
+            ).fetchall()
+            deb_money_rows = conn.execute(
+                "SELECT user_id, SUM(money_amount) AS total FROM debits GROUP BY user_id"
+            ).fetchall()
+            deb_hours_rows = conn.execute(
+                "SELECT user_id, SUM(hours_amount) AS total FROM debits GROUP BY user_id"
+            ).fetchall()
 
         money_map = {row["child_id"]: float(row["total"] or 0) for row in money_rows}
         hours_map = {row["child_id"]: float(row["total"] or 0) for row in hours_rows}
@@ -375,31 +539,56 @@ def save_user_photo(user_id: int, file_bytes: bytes, original_filename: str) -> 
 def seed_sample_data():
     conn = get_connection()
     try:
-        count = conn.execute("SELECT COUNT(1) FROM users").fetchone()[0]
-        if count == 0:
-            logger.info("Inserindo usuários de exemplo")
-            conn.executemany(
-                "INSERT INTO users (name, email, roles, password_hash) VALUES (?, ?, ?, ?)",
-                [
-                    ("Validador", "admin@example.com", "validator", hash_password("123")),
-                    ("Joao", "joao@example.com", "child", hash_password("123")),
-                    ("Ana", "ana@example.com", "child", hash_password("123")),
-                ],
-            )
-        conn.commit()
-
-        users_no_pwd = conn.execute(
-            "SELECT id FROM users WHERE password_hash IS NULL OR password_hash = ''"
-        ).fetchall()
-        for row in users_no_pwd:
-            conn.execute(
-                "UPDATE users SET password_hash = ? WHERE id = ?",
-                (hash_password("123"), row["id"]),
-            )
-        if users_no_pwd:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(1) FROM users")
+            count = cur.fetchone()[0]
+            if count == 0:
+                logger.info("Inserindo usuários de exemplo")
+                cur.executemany(
+                    "INSERT INTO users (name, email, roles, password_hash) VALUES (%s, %s, %s, %s)",
+                    [
+                        ("Validador", "admin@example.com", "validator", hash_password("123")),
+                        ("Joao", "joao@example.com", "child", hash_password("123")),
+                        ("Ana", "ana@example.com", "child", hash_password("123")),
+                    ],
+                )
+            cur.execute("SELECT id FROM users WHERE password_hash IS NULL OR password_hash = ''")
+            users_no_pwd = cur.fetchall()
+            for row in users_no_pwd:
+                cur.execute(
+                    "UPDATE users SET password_hash = %s WHERE id = %s",
+                    (hash_password("123"), row["id"]),
+                )
+            cur.close()
+            conn.commit()
+            ensure_conversion_exists(conn)
+        else:
+            count = conn.execute("SELECT COUNT(1) FROM users").fetchone()[0]
+            if count == 0:
+                logger.info("Inserindo usuários de exemplo")
+                conn.executemany(
+                    "INSERT INTO users (name, email, roles, password_hash) VALUES (?, ?, ?, ?)",
+                    [
+                        ("Validador", "admin@example.com", "validator", hash_password("123")),
+                        ("Joao", "joao@example.com", "child", hash_password("123")),
+                        ("Ana", "ana@example.com", "child", hash_password("123")),
+                    ],
+                )
             conn.commit()
 
-        ensure_conversion_exists(conn)
+            users_no_pwd = conn.execute(
+                "SELECT id FROM users WHERE password_hash IS NULL OR password_hash = ''"
+            ).fetchall()
+            for row in users_no_pwd:
+                conn.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    (hash_password("123"), row["id"]),
+                )
+            if users_no_pwd:
+                conn.commit()
+
+            ensure_conversion_exists(conn)
     finally:
         conn.close()
 
