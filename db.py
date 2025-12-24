@@ -7,10 +7,20 @@ from sqlalchemy.ext.declarative import declarative_base
 import os
 import logging
 
-DB_FILENAME = os.environ.get("GESTAO_DB", "gestaoinfantil.db")
-DB_URL = f"sqlite:///{DB_FILENAME}"
-
-engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+DB_ENV = os.environ.get("GESTAO_DB", "gestaoinfantil.db")
+# If the env value looks like a full DB URL (postgres, mysql, etc.), use it directly.
+if DB_ENV.startswith('sqlite') or not (DB_ENV.startswith('postgres') or DB_ENV.startswith('mysql') or DB_ENV.startswith('mssql')):
+    # treat as sqlite filename
+    DB_FILENAME = DB_ENV if DB_ENV.startswith('sqlite') else DB_ENV
+    if not DB_FILENAME.startswith('sqlite'):
+        DB_URL = f"sqlite:///{DB_FILENAME}"
+    else:
+        DB_URL = DB_FILENAME
+    engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+else:
+    # external DB URL provided (postgres/mysql); don't pass sqlite-only connect_args
+    DB_URL = DB_ENV
+    engine = create_engine(DB_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
