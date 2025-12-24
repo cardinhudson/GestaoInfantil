@@ -1,111 +1,154 @@
-"""Serviços (CRUD) e lógica do domínio."""
-from db import get_session, init_db
-from models import User, Task, Conversion, Debit
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from datetime import datetime
+"""Serviços (CRUD) e lógica do domínio utilizando sqlite3 explicitamente."""
 import hashlib
 import logging
+import os
+import time
+from datetime import datetime
+from typing import Dict, List, Optional
+
+from db import get_connection
+from models import Conversion, Debit, Task, User
 
 logger = logging.getLogger(__name__)
-
-
-def ensure_conversion_exists(db: Session):
-    conv = db.query(Conversion).first()
-    if not conv:
-        conv = Conversion(money_per_point=0.5, hours_per_point=0.1)
-        db.add(conv)
-        db.commit()
-        db.refresh(conv)
-    return conv
 
 
 def hash_password(password: str) -> str:
     return hashlib.sha256((password or "").encode()).hexdigest()
 
 
-def create_user(name: str, email: str = None, roles: str = "child", password: str = None) -> User:
-    db = get_session()
-    usr = User(name=name, email=email, roles=roles, password_hash=hash_password(password) if password else None)
-    db.add(usr)
-    db.commit()
-    db.refresh(usr)
-    db.close()
-    return usr
-
-
-def list_users():
-    db = get_session()
-    users = db.query(User).all()
-    db.close()
-    return users
-
-
-def update_user_email(user_id: int, new_email: str):
-    db = get_session()
-    usr = db.query(User).get(user_id)
-    if usr:
-        usr.email = new_email
-        db.commit()
-        db.refresh(usr)
-    db.close()
-    return usr
-
-
-def update_user_password(user_id: int, new_password: str):
-    """Atualiza a senha (armazenando hash) para o usuário informado."""
-    db = get_session()
-    usr = db.query(User).get(user_id)
-    if not usr:
-        db.close()
+def _row_to_user(row) -> Optional[User]:
+    if not row:
         return None
-    usr.password_hash = hash_password(new_password)
-    db.commit()
-    db.refresh(usr)
-    db.close()
+    return User(
+        id=row["id"],
+        name=row["name"],
+        email=row["email"],
+        roles=row["roles"],
+        password_hash=row["password_hash"],
+        photo=row["photo"],
+    )
+
+
+def _row_to_task(row) -> Optional[Task]:
+    if not row:
+        return None
+    return Task(
+        id=row["id"],
+        name=row["name"],
+        points=float(row["points"]),
+        conversion_type=row["conversion_type"],
+        child_id=row["child_id"],
+        submitted_by_id=row["submitted_by_id"],
+        validator_id=row["validator_id"],
+        validated=bool(row["validated"]),
+        created_at=row["created_at"],
+        validated_at=row["validated_at"],
+    )
+
+
+def _row_to_debit(row) -> Optional[Debit]:
+    if not row:
+        return None
+    return Debit(
+        id=row["id"],
+        user_id=row["user_id"],
+        points_deducted=row["points_deducted"],
+        money_amount=row["money_amount"],
+        hours_amount=row["hours_amount"],
+        reason=row["reason"],
+        performed_by_id=row["performed_by_id"],
+        created_at=row["created_at"],
+    )
+
+
+def _row_to_conversion(row) -> Optional[Conversion]:
+    if not row:
+        return None
+    return Conversion(
+        id=row["id"],
+        money_per_point=float(row["money_per_point"]),
+        hours_per_point=float(row["hours_per_point"]),
+    )
+
+
+def create_user(name: str, email: str = None, roles: str = "child", password: str = None) -> User:
+    conn = get_connection()
     try:
-        logger.info(f"Senha atualizada para user_id={user_id}")
-    except Exception:
-        pass
-    return usr
-
-
-def get_user_by_email(email: str):
-    db = get_session()
-    usr = db.query(User).filter(func.lower(User.email) == (email or '').lower()).first()
-    db.close()
-    return usr
-
-
-def delete_user(user_id: int):
-    """Remove usuário e registros relacionados (tarefas e débitos) do banco.
-    Retorna True se usuário existia e foi removido, False caso contrário.
-    """
-    db = get_session()
-    try:
-        # Remover tarefas relacionadas (child, submitted_by, validator)
-        db.query(Task).filter(
-            (Task.child_id == user_id) | (Task.submitted_by_id == user_id) | (Task.validator_id == user_id)
-        ).delete(synchronize_session=False)
-
-        # Remover débitos relacionados (user alvo ou quem executou)
-        db.query(Debit).filter((Debit.user_id == user_id) | (Debit.performed_by_id == user_id)).delete(synchronize_session=False)
-
-        usr = db.query(User).get(user_id)
-        if not usr:
-            db.close()
-            return False
-        db.delete(usr)
-        db.commit()
-        return True
-    except Exception:
-        db.rollback()
-        raise
+        cursor = conn.execute(
+            "INSERT INTO users (name, email, roles, password_hash) VALUES (?, ?, ?, ?)",
+            (name, email, roles, hash_password(password) if password else None),
+        )
+        conn.commit()
+        user_id = cursor.lastrowid
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return _row_to_user(row)
     finally:
-        db.close()
+        conn.close()
 
 
-def authenticate_user(email: str, password: str):
+def list_users() -> List[User]:
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+        return [_row_to_user(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def update_user_email(user_id: int, new_email: str) -> Optional[User]:
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE users SET email = ? WHERE id = ?", (new_email, user_id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return _row_to_user(row)
+    finally:
+        conn.close()
+
+
+def update_user_password(user_id: int, new_password: str) -> Optional[User]:
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(new_password), user_id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row:
+            logger.info("Senha atualizada para user_id=%s", user_id)
+        return _row_to_user(row)
+    finally:
+        conn.close()
+
+
+def get_user_by_email(email: str) -> Optional[User]:
+    if not email:
+        return None
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM users WHERE LOWER(email) = LOWER(?)", (email,)).fetchone()
+        return _row_to_user(row)
+    finally:
+        conn.close()
+
+
+def delete_user(user_id: int) -> bool:
+    conn = get_connection()
+    try:
+        conn.execute(
+            "DELETE FROM tasks WHERE child_id = ? OR submitted_by_id = ? OR validator_id = ?",
+            (user_id, user_id, user_id),
+        )
+        conn.execute(
+            "DELETE FROM debits WHERE user_id = ? OR performed_by_id = ?",
+            (user_id, user_id),
+        )
+        cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def authenticate_user(email: str, password: str) -> Optional[User]:
     usr = get_user_by_email(email)
     if not usr or not usr.password_hash:
         return None
@@ -114,192 +157,256 @@ def authenticate_user(email: str, password: str):
     return None
 
 
-def create_task(name: str, amount: float, conversion_type: str, child_id: int, submitted_by_id: int, validator_id: int = None):
-    db = get_session()
-    task = Task(name=name, points=float(amount), conversion_type=conversion_type, child_id=child_id,
-                submitted_by_id=submitted_by_id, validator_id=validator_id)
-    db.add(task)
-    db.commit()
-    db.refresh(task)
+def create_task(name: str, amount: float, conversion_type: str, child_id: int, submitted_by_id: int, validator_id: int = None) -> Task:
+    conn = get_connection()
     try:
-        logger.info(f"Tarefa criada: id={task.id} nome={task.name} child={child_id} valor={task.points} tipo={conversion_type}")
-    except Exception:
-        pass
-    db.close()
-    return task
+        cursor = conn.execute(
+            """
+            INSERT INTO tasks (name, points, conversion_type, child_id, submitted_by_id, validator_id, validated)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (name, float(amount), conversion_type, child_id, submitted_by_id, validator_id, 0),
+        )
+        conn.commit()
+        task_id = cursor.lastrowid
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        task = _row_to_task(row)
+        if task:
+            logger.info(
+                "Tarefa criada id=%s nome=%s child=%s valor=%s tipo=%s",
+                task.id,
+                task.name,
+                child_id,
+                task.points,
+                conversion_type,
+            )
+        return task
+    finally:
+        conn.close()
 
 
-def list_tasks(validated: bool = None):
-    db = get_session()
-    q = db.query(Task)
-    if validated is not None:
-        q = q.filter(Task.validated == validated)
-    tasks = q.all()
-    db.close()
-    return tasks
+def list_tasks(validated: bool = None) -> List[Task]:
+    conn = get_connection()
+    try:
+        if validated is None:
+            rows = conn.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE validated = ? ORDER BY created_at DESC",
+                (1 if validated else 0,),
+            ).fetchall()
+        return [_row_to_task(row) for row in rows]
+    finally:
+        conn.close()
 
 
-def validate_task(task_id: int, validator_id: int):
-    db = get_session()
-    task = db.query(Task).get(task_id)
-    if task and not task.validated:
-        task.validated = True
-        task.validator_id = validator_id
-        task.validated_at = datetime.utcnow()
-        db.commit()
-        db.refresh(task)
-        try:
-            logger.info(f"Tarefa validada: id={task.id} por={validator_id}")
-        except Exception:
-            pass
-        # Notificação por e-mail desabilitada por configuração (evitar falhas em deploys sem SMTP).
-        logger.debug("Envio de e-mail desabilitado: notificação de validação não será enviada.")
-    db.close()
-    return task
+def validate_task(task_id: int, validator_id: int) -> Optional[Task]:
+    conn = get_connection()
+    try:
+        now = datetime.utcnow().isoformat()
+        conn.execute(
+            "UPDATE tasks SET validated = 1, validator_id = ?, validated_at = ? WHERE id = ?",
+            (validator_id, now, task_id),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        task = _row_to_task(row)
+        if task:
+            logger.info("Tarefa validada id=%s por=%s", task.id, validator_id)
+        return task
+    finally:
+        conn.close()
 
 
-def get_conversion():
-    # Conversões deixam de ser usadas diretamente; mantido para compatibilidade futura
-    db = get_session()
-    conv = ensure_conversion_exists(db)
-    db.close()
-    return conv
+def ensure_conversion_exists(conn) -> Conversion:
+    row = conn.execute("SELECT * FROM conversions LIMIT 1").fetchone()
+    if row:
+        return _row_to_conversion(row)
+    conn.execute("INSERT INTO conversions (money_per_point, hours_per_point) VALUES (?, ?)", (0.5, 0.1))
+    conn.commit()
+    row = conn.execute("SELECT * FROM conversions LIMIT 1").fetchone()
+    return _row_to_conversion(row)
 
 
-def set_conversion(money_per_point: float, hours_per_point: float):
-    db = get_session()
-    conv = ensure_conversion_exists(db)
-    conv.money_per_point = money_per_point
-    conv.hours_per_point = hours_per_point
-    db.commit()
-    db.refresh(conv)
-    db.close()
-    return conv
+def get_conversion() -> Conversion:
+    conn = get_connection()
+    try:
+        return ensure_conversion_exists(conn)
+    finally:
+        conn.close()
 
 
-def create_debit(user_id: int, points: int, money: float = None, hours: float = None, reason: str = None, performed_by_id: int = None):
-    db = get_session()
-    debit = Debit(user_id=user_id, points_deducted=points, money_amount=money, hours_amount=hours, reason=reason, performed_by_id=performed_by_id)
-    db.add(debit)
-    db.commit()
-    db.refresh(debit)
-    db.close()
-    return debit
+def set_conversion(money_per_point: float, hours_per_point: float) -> Conversion:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id FROM conversions LIMIT 1").fetchone()
+        if row:
+            conn.execute(
+                "UPDATE conversions SET money_per_point = ?, hours_per_point = ? WHERE id = ?",
+                (money_per_point, hours_per_point, row["id"]),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO conversions (money_per_point, hours_per_point) VALUES (?, ?)",
+                (money_per_point, hours_per_point),
+            )
+        conn.commit()
+        return ensure_conversion_exists(conn)
+    finally:
+        conn.close()
 
 
-def list_debits(user_id: int = None):
-    db = get_session()
-    q = db.query(Debit)
-    if user_id is not None:
-        q = q.filter(Debit.user_id == user_id)
-    res = q.order_by(Debit.created_at.desc()).all()
-    db.close()
-    return res
+def create_debit(
+    user_id: int,
+    points: int,
+    money: float = None,
+    hours: float = None,
+    reason: str = None,
+    performed_by_id: int = None,
+) -> Debit:
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            """
+            INSERT INTO debits (user_id, points_deducted, money_amount, hours_amount, reason, performed_by_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, points or 0, money, hours, reason, performed_by_id),
+        )
+        conn.commit()
+        debit_id = cursor.lastrowid
+        row = conn.execute("SELECT * FROM debits WHERE id = ?", (debit_id,)).fetchone()
+        return _row_to_debit(row)
+    finally:
+        conn.close()
 
 
-def get_report():
-    """Saldo por usuário (dinheiro e horas) usando tasks validadas e débitos registrados."""
-    db = get_session()
-
-    # Tarefas validadas: dinheiro
-    money_q = db.query(Task.child_id, func.sum(Task.points).label('money')).filter(
-        Task.validated == True, Task.conversion_type == 'money').group_by(Task.child_id).subquery()
-    # Tarefas validadas: horas
-    hours_q = db.query(Task.child_id, func.sum(Task.points).label('hours')).filter(
-        Task.validated == True, Task.conversion_type == 'hours').group_by(Task.child_id).subquery()
-
-    # Débitos
-    debit_money_q = db.query(Debit.user_id, func.sum(Debit.money_amount).label('deb_money')).group_by(Debit.user_id).subquery()
-    debit_hours_q = db.query(Debit.user_id, func.sum(Debit.hours_amount).label('deb_hours')).group_by(Debit.user_id).subquery()
-
-    users = db.query(User).all()
-    report = []
-    for u in users:
-        money_earn = db.query(money_q.c.money).filter(money_q.c.child_id == u.id).scalar() or 0.0
-        hours_earn = db.query(hours_q.c.hours).filter(hours_q.c.child_id == u.id).scalar() or 0.0
-        money_deb = db.query(debit_money_q.c.deb_money).filter(debit_money_q.c.user_id == u.id).scalar() or 0.0
-        hours_deb = db.query(debit_hours_q.c.deb_hours).filter(debit_hours_q.c.user_id == u.id).scalar() or 0.0
-        balance_money = round((money_earn - (money_deb or 0)), 2)
-        balance_hours = round((hours_earn - (hours_deb or 0)), 2)
-        report.append({
-            'user': u,
-            'money': float(balance_money),
-            'hours': float(balance_hours),
-            'earned_money': float(money_earn),
-            'earned_hours': float(hours_earn),
-            'debited_money': float(money_deb or 0),
-            'debited_hours': float(hours_deb or 0),
-        })
-
-    db.close()
-    return report
+def list_debits(user_id: int = None) -> List[Debit]:
+    conn = get_connection()
+    try:
+        if user_id is None:
+            rows = conn.execute("SELECT * FROM debits ORDER BY created_at DESC").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM debits WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,),
+            ).fetchall()
+        return [_row_to_debit(row) for row in rows]
+    finally:
+        conn.close()
 
 
-import os
-import time
+def get_report() -> List[Dict[str, float]]:
+    conn = get_connection()
+    try:
+        users = list_users()
+        money_rows = conn.execute(
+            "SELECT child_id, SUM(points) AS total FROM tasks WHERE validated = 1 AND conversion_type = 'money' GROUP BY child_id"
+        ).fetchall()
+        hours_rows = conn.execute(
+            "SELECT child_id, SUM(points) AS total FROM tasks WHERE validated = 1 AND conversion_type = 'hours' GROUP BY child_id"
+        ).fetchall()
+        deb_money_rows = conn.execute(
+            "SELECT user_id, SUM(money_amount) AS total FROM debits GROUP BY user_id"
+        ).fetchall()
+        deb_hours_rows = conn.execute(
+            "SELECT user_id, SUM(hours_amount) AS total FROM debits GROUP BY user_id"
+        ).fetchall()
 
-UPLOADS_DIR = os.environ.get('GESTAO_UPLOADS', 'uploads')
+        money_map = {row["child_id"]: float(row["total"] or 0) for row in money_rows}
+        hours_map = {row["child_id"]: float(row["total"] or 0) for row in hours_rows}
+        deb_money_map = {row["user_id"]: float(row["total"] or 0) for row in deb_money_rows}
+        deb_hours_map = {row["user_id"]: float(row["total"] or 0) for row in deb_hours_rows}
+
+        report = []
+        for user in users:
+            earned_money = money_map.get(user.id, 0.0)
+            earned_hours = hours_map.get(user.id, 0.0)
+            deb_money = deb_money_map.get(user.id, 0.0)
+            deb_hours = deb_hours_map.get(user.id, 0.0)
+            report.append(
+                {
+                    "user": user,
+                    "money": round(earned_money - deb_money, 2),
+                    "hours": round(earned_hours - deb_hours, 2),
+                    "earned_money": earned_money,
+                    "earned_hours": earned_hours,
+                    "debited_money": deb_money,
+                    "debited_hours": deb_hours,
+                }
+            )
+        return report
+    finally:
+        conn.close()
+
+
+UPLOADS_DIR = os.environ.get("GESTAO_UPLOADS", "uploads")
 
 
 def ensure_uploads_dir():
-    path = os.path.join(UPLOADS_DIR, 'users')
+    path = os.path.join(UPLOADS_DIR, "users")
     os.makedirs(path, exist_ok=True)
     return path
 
 
 def _safe_filename(name: str) -> str:
-    # simples sanitização para nomes de arquivos
-    return ''.join(c for c in name if c.isalnum() or c in (' ','.','_','-')).replace(' ','_')
+    return "".join(c for c in name if c.isalnum() or c in (" ", ".", "_", "-")).replace(" ", "_")
 
 
 def save_user_photo(user_id: int, file_bytes: bytes, original_filename: str) -> str:
-    """Salva o arquivo em uploads/users e atualiza o campo `photo` do usuário.
-    Retorna o caminho relativo salvo.
-    """
     ensure_uploads_dir()
     ts = int(time.time())
-    ext = os.path.splitext(original_filename)[1].lower() or '.jpg'
-    fname = f"user_{user_id}_{ts}{ext}"
-    fname = _safe_filename(fname)
-    path = os.path.join(UPLOADS_DIR, 'users', fname)
+    ext = os.path.splitext(original_filename)[1].lower() or ".jpg"
+    fname = _safe_filename(f"user_{user_id}_{ts}{ext}")
+    path = os.path.join(UPLOADS_DIR, "users", fname)
 
-    with open(path, 'wb') as f:
-        f.write(file_bytes)
+    with open(path, "wb") as fh:
+        fh.write(file_bytes)
 
-    db = get_session()
-    usr = db.query(User).get(user_id)
-    if usr:
-        usr.photo = path
-        db.commit()
-        db.refresh(usr)
-    db.close()
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE users SET photo = ? WHERE id = ?", (path, user_id))
+        conn.commit()
+    finally:
+        conn.close()
     return path
 
 
 def seed_sample_data():
-    db = get_session()
-    if db.query(User).count() == 0:
-        # Seed minimal: dois children e um validador (senha padrão 123)
-        db.add_all([
-            User(name='Validador', email='admin@example.com', roles='validator', password_hash=hash_password('123')),
-            User(name='Joao', email='joao@example.com', roles='child', password_hash=hash_password('123')),
-            User(name='Ana', email='ana@example.com', roles='child', password_hash=hash_password('123')),
-        ])
-        db.commit()
-    # Garantir que usuários existentes tenham senha padrão (somente em ambientes de desenvolvimento)
-    users_no_pwd = db.query(User).filter((User.password_hash == None) | (User.password_hash == '')).all()
-    for u in users_no_pwd:
-        u.password_hash = hash_password('123')
-    if users_no_pwd:
-        db.commit()
-
-    ensure_conversion_exists(db)
-    ensure_uploads_dir()
-    db.close()
-
-    # Garantir que exista um administrador com e-mail conhecido para desenvolvimento
+    conn = get_connection()
     try:
-        if not get_user_by_email('admin@example.com'):
-            create_user(name='Administrador', email='admin@example.com', roles='validator', password='123')
+        count = conn.execute("SELECT COUNT(1) FROM users").fetchone()[0]
+        if count == 0:
+            logger.info("Inserindo usuários de exemplo")
+            conn.executemany(
+                "INSERT INTO users (name, email, roles, password_hash) VALUES (?, ?, ?, ?)",
+                [
+                    ("Validador", "admin@example.com", "validator", hash_password("123")),
+                    ("Joao", "joao@example.com", "child", hash_password("123")),
+                    ("Ana", "ana@example.com", "child", hash_password("123")),
+                ],
+            )
+        conn.commit()
+
+        users_no_pwd = conn.execute(
+            "SELECT id FROM users WHERE password_hash IS NULL OR password_hash = ''"
+        ).fetchall()
+        for row in users_no_pwd:
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (hash_password("123"), row["id"]),
+            )
+        if users_no_pwd:
+            conn.commit()
+
+        ensure_conversion_exists(conn)
+    finally:
+        conn.close()
+
+    ensure_uploads_dir()
+
+    try:
+        if not get_user_by_email("admin@example.com"):
+            create_user(name="Administrador", email="admin@example.com", roles="validator", password="123")
     except Exception:
         pass

@@ -1,57 +1,51 @@
-"""Modelos SQLAlchemy
+"""Data structures used by the services layer.
+
+These lightweight dataclasses replace the previous SQLAlchemy models so that the
+rest of the application can continue to interact with plain Python objects even
+though persistence is now handled via the sqlite3 module directly.
 """
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Boolean, DateTime, Text
-from sqlalchemy.orm import relationship
-from datetime import datetime
-from db import Base
+from dataclasses import dataclass
+from typing import Optional
 
 
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False)
-    email = Column(String, nullable=True)
-    roles = Column(String, default="child")  # 'child' ou 'validator'
-    password_hash = Column(String, nullable=True)
-    photo = Column(String, nullable=True)  # caminho para arquivo de foto (uploads/users/...)
-
-    submitted_tasks = relationship("Task", back_populates="submitted_by", foreign_keys='Task.submitted_by_id')
-    validated_tasks = relationship("Task", back_populates="validator", foreign_keys='Task.validator_id')
+@dataclass
+class User:
+    id: int
+    name: str
+    email: Optional[str]
+    roles: str
+    password_hash: Optional[str]
+    photo: Optional[str]
 
 
-class Conversion(Base):
-    __tablename__ = "conversions"
-    id = Column(Integer, primary_key=True)
-    money_per_point = Column(Float, default=0.5)  # R$ per point
-    hours_per_point = Column(Float, default=0.1)  # hours per point
+@dataclass
+class Conversion:
+    id: int
+    money_per_point: float
+    hours_per_point: float
 
 
-class Task(Base):
-    __tablename__ = "tasks"
-    id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False)
-    points = Column(Float, nullable=False)  # valor em dinheiro ou horas, depende de conversion_type
-    conversion_type = Column(String, nullable=False)  # 'money' or 'hours'
-
-    child_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    submitted_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    validator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-
-    validated = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    validated_at = Column(DateTime, nullable=True)
-
-    submitted_by = relationship("User", foreign_keys=[submitted_by_id], back_populates="submitted_tasks")
-    validator = relationship("User", foreign_keys=[validator_id], back_populates="validated_tasks")
+@dataclass
+class Task:
+    id: int
+    name: str
+    points: float
+    conversion_type: str
+    child_id: int
+    submitted_by_id: int
+    validator_id: Optional[int]
+    validated: bool
+    created_at: str
+    validated_at: Optional[str]
 
 
-class Debit(Base):
-    __tablename__ = "debits"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    points_deducted = Column(Integer, nullable=False)
-    money_amount = Column(Float, nullable=True)
-    hours_amount = Column(Float, nullable=True)
-    reason = Column(Text, nullable=True)
-    performed_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+@dataclass
+class Debit:
+    id: int
+    user_id: int
+    points_deducted: int
+    money_amount: Optional[float]
+    hours_amount: Optional[float]
+    reason: Optional[str]
+    performed_by_id: int
+    created_at: str

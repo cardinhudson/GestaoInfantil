@@ -1,0 +1,28 @@
+name: DB Migrate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run DB migration
+        env:
+          GESTAO_DB: ${{ secrets.GESTAO_DB }}
+        run: |
+          chmod +x migrate.sh
+          ./migrate.sh

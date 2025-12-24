@@ -1,75 +1,109 @@
-"""db.py
-Configuração do SQLite + SQLAlchemy e função para inicializar o DB.
+"""SQLite database helpers used across the application.
+
+This module intentionally relies on the standard ``sqlite3`` module so that the
+same codepath is executed locally and on Streamlit Cloud, ensuring that the
+database file is created, reused, and committed safely on every operation.
 """
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
-import os
 import logging
+import os
+import sqlite3
+from pathlib import Path
+from typing import Optional
 
-DB_ENV = os.environ.get("GESTAO_DB", "gestaoinfantil.db")
-# If the env value looks like a full DB URL (postgres, mysql, etc.), use it directly.
-if DB_ENV.startswith('sqlite') or not (DB_ENV.startswith('postgres') or DB_ENV.startswith('mysql') or DB_ENV.startswith('mssql')):
-    # treat as sqlite filename
-    DB_FILENAME = DB_ENV if DB_ENV.startswith('sqlite') else DB_ENV
-    if not DB_FILENAME.startswith('sqlite'):
-        DB_URL = f"sqlite:///{DB_FILENAME}"
-    else:
-        DB_URL = DB_FILENAME
-    engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
-else:
-    # external DB URL provided (postgres/mysql); don't pass sqlite-only connect_args
-    DB_URL = DB_ENV
-    engine = create_engine(DB_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-# Logger para depuração de persistência
 logger = logging.getLogger(__name__)
-try:
-    logger.info(f"DB_URL={DB_URL} DB_FILENAME_ABS={os.path.abspath(DB_FILENAME)}")
-except Exception:
-    pass
 
 
-from sqlalchemy import text
+def _get_db_target_from_env() -> Optional[str]:
+    target = os.environ.get("GESTAO_DB")
+    if target:
+        return target
+    try:
+        import streamlit as _st  # type: ignore
+
+        secrets = getattr(_st, "secrets", None)
+        if isinstance(secrets, dict):
+            if secrets.get("GESTAO_DB"):
+                return secrets["GESTAO_DB"]
+            if secrets.get("DATABASE_URL"):
+                return secrets["DATABASE_URL"]
+    except Exception:
+        return None
+    return None
+
+
+def _resolve_sqlite_path() -> Path:
+    target = _get_db_target_from_env() or "gestaoinfantil.db"
+    if target.startswith("sqlite://"):
+        target = target.replace("sqlite://", "", 1).lstrip("/")
+    path = Path(target)
+    if not path.is_absolute():
+        path = Path(os.getcwd()).joinpath(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path.resolve()
+
+
+DB_PATH = _resolve_sqlite_path()
+logger.info(f"Using SQLite database at {DB_PATH}")
+
+
+def get_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, detect_types=sqlite3.PARSE_DECLTYPES)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    return conn
+
 
 def init_db():
-    """Cria as tabelas se não existirem e aplica migrações simples."""
-    from models import User, Task, Conversion, Debit  # noqa: F401
-    Base.metadata.create_all(bind=engine)
-    # migração simples: adicionar coluna `photo` em users se não existir
-    ensure_user_photo_column()
-    ensure_user_password_column()
-
-
-def ensure_user_photo_column():
-    """Verifica se a coluna `photo` existe na tabela `users` e a cria se ausente.
-    Isso evita erros quando o schema foi atualizado sem migrações formais.
-    """
+    conn = get_connection()
     try:
-        with engine.connect() as conn:
-            res = conn.execute(text("PRAGMA table_info(users);"))
-            cols = [row["name"] for row in res.mappings()]
-            if "photo" not in cols:
-                conn.execute(text("ALTER TABLE users ADD COLUMN photo TEXT;"))
-    except Exception:
-        # Não falhar a inicialização apenas por causa da migração; log opcional
-        pass
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT,
+                roles TEXT NOT NULL DEFAULT 'child',
+                password_hash TEXT,
+                photo TEXT
+            );
 
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                points REAL NOT NULL,
+                conversion_type TEXT NOT NULL,
+                child_id INTEGER NOT NULL,
+                submitted_by_id INTEGER,
+                validator_id INTEGER,
+                validated INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                validated_at TEXT,
+                FOREIGN KEY(child_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(submitted_by_id) REFERENCES users(id),
+                FOREIGN KEY(validator_id) REFERENCES users(id)
+            );
 
-def ensure_user_password_column():
-    """Adiciona coluna password_hash se ausente."""
-    try:
-        with engine.connect() as conn:
-            res = conn.execute(text("PRAGMA table_info(users);"))
-            cols = [row[1] for row in res.fetchall()]
-            if "password_hash" not in cols:
-                conn.execute(text("ALTER TABLE users ADD COLUMN password_hash TEXT;"))
-    except Exception:
-        pass
+            CREATE TABLE IF NOT EXISTS conversions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                money_per_point REAL NOT NULL DEFAULT 0.5,
+                hours_per_point REAL NOT NULL DEFAULT 0.1
+            );
 
-
-def get_session():
-    logger.debug(f"Abrindo sessão DB para {DB_URL}")
-    return SessionLocal()
+            CREATE TABLE IF NOT EXISTS debits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                points_deducted INTEGER NOT NULL DEFAULT 0,
+                money_amount REAL,
+                hours_amount REAL,
+                reason TEXT,
+                performed_by_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(performed_by_id) REFERENCES users(id)
+            );
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()

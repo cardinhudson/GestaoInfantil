@@ -6,7 +6,7 @@ import subprocess
 from db import init_db
 from services import (create_user, list_users, update_user_email, create_task, list_tasks, validate_task,
                       get_conversion, set_conversion, create_debit, get_report, seed_sample_data, save_user_photo,
-                      authenticate_user, get_user_by_email, update_user_password, list_debits)
+                      authenticate_user, get_user_by_email, update_user_password, list_debits, delete_user)
 # Envio de e-mail desabilitado por padrão para evitar falhas em ambientes sem SMTP
 
 import logging
@@ -66,6 +66,13 @@ except Exception:
 
 # Evita múltiplos disparos de abertura de navegador em reruns do Streamlit
 _AUTO_BROWSER_STARTED = False
+
+
+def photo_or_placeholder(user, width=60):
+    path = getattr(user, 'photo', None)
+    if path and os.path.exists(path):
+        return path
+    return None
 
 
 def is_role(user, role):
@@ -220,11 +227,6 @@ def main():
 
     report = get_report()
     children_report = [r for r in report if 'child' in (r['user'].roles or '')]
-
-    def photo_or_placeholder(u, width=60):
-        if u.photo and os.path.exists(u.photo):
-            return u.photo
-        return None
 
     def render_balance_charts(children_report):
         if not children_report:
@@ -499,7 +501,6 @@ def main():
                                     os.remove(u.photo)
                             except Exception:
                                 logging.exception('Falha ao remover foto do usuário')
-                            from services import delete_user
                             ok = delete_user(u.id)
                             if ok:
                                 st.success('Usuário excluído com sucesso.')
