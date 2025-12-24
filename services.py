@@ -6,7 +6,6 @@ from sqlalchemy import func
 from datetime import datetime
 import hashlib
 import logging
-from email_utils import send_email
 
 logger = logging.getLogger(__name__)
 
@@ -153,17 +152,8 @@ def validate_task(task_id: int, validator_id: int):
             logger.info(f"Tarefa validada: id={task.id} por={validator_id}")
         except Exception:
             pass
-        # Enviar notificação por e-mail ao criador da tarefa, se e-mail disponível.
-        try:
-            submitted_by = task.submitted_by
-            if submitted_by and getattr(submitted_by, 'email', None):
-                try:
-                    send_email([submitted_by.email], f"Tarefa validada: {task.name}", f"Sua tarefa {task.name} foi validada.")
-                except Exception:
-                    logger.exception("Falha ao enviar e-mail de notificação de validação")
-        except Exception:
-            # se ocorrer DetachedInstanceError ou similar, apenas logar e prosseguir
-            logger.debug("Não foi possível obter e-mail do criador para notificação")
+        # Notificação por e-mail desabilitada por configuração (evitar falhas em deploys sem SMTP).
+        logger.debug("Envio de e-mail desabilitado: notificação de validação não será enviada.")
     db.close()
     return task
 

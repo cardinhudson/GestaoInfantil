@@ -7,7 +7,7 @@ from db import init_db
 from services import (create_user, list_users, update_user_email, create_task, list_tasks, validate_task,
                       get_conversion, set_conversion, create_debit, get_report, seed_sample_data, save_user_photo,
                       authenticate_user, get_user_by_email, update_user_password, list_debits)
-from email_utils import send_email
+# Envio de e-mail desabilitado por padrão para evitar falhas em ambientes sem SMTP
 
 import logging
 import sys
