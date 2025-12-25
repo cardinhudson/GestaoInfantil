@@ -570,8 +570,10 @@ def save_user_photo(user_id: int, file_bytes: bytes, original_filename: str) -> 
             conn.commit()
             cur.close()
         else:
-            conn.execute("UPDATE users SET photo = ? WHERE id = ?", (path, user_id))
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET photo = ? WHERE id = ?", (path, user_id))
             conn.commit()
+            cur.close()
     finally:
         conn.close()
     return path
