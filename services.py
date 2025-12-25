@@ -80,7 +80,8 @@ def create_user(name: str, email: str = None, roles: str = "child", password: st
                 "INSERT INTO users (name, email, roles, password_hash) VALUES (%s, %s, %s, %s) RETURNING id",
                 (name, email, roles, hash_password(password) if password else None),
             )
-            user_id = cur.fetchone()[0]
+            row_id = cur.fetchone()
+            user_id = row_id.get("id") if isinstance(row_id, dict) else row_id[0]
             cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             fetched = cur.fetchone()
             cur.close()
@@ -226,7 +227,8 @@ def create_task(name: str, amount: float, conversion_type: str, child_id: int, s
                 """,
                 (name, float(amount), conversion_type, child_id, submitted_by_id, validator_id, False),
             )
-            task_id = cur.fetchone()[0]
+            row_id = cur.fetchone()
+            task_id = row_id.get("id") if isinstance(row_id, dict) else row_id[0]
             cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
             row = cur.fetchone()
             cur.close()
@@ -399,7 +401,8 @@ def create_debit(
                 """,
                 (user_id, points or 0, money, hours, reason, performed_by_id),
             )
-            debit_id = cur.fetchone()[0]
+            row_id = cur.fetchone()
+            debit_id = row_id.get("id") if isinstance(row_id, dict) else row_id[0]
             cur.execute("SELECT * FROM debits WHERE id = %s", (debit_id,))
             row = cur.fetchone()
             cur.close()
