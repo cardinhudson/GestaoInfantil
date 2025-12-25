@@ -1,13 +1,14 @@
 [server]
 
-# Headless desativado para abrir navegador localmente.
-# Em ambientes como Streamlit Cloud, o headless é forçado pela plataforma.
-headless = false
+# Cloud-safe defaults. Streamlit Cloud exige headless e bind em 0.0.0.0.
+headless = true
 port = 8501
-# Para abrir no navegador local mostrando http://localhost:8501 em vez de 0.0.0.0,
-# defina o bind para localhost. Em cloud (Streamlit Cloud), eles sobrescrevem para 0.0.0.0.
-address = "localhost"
+address = "0.0.0.0"
 enableCORS = true
+
+[browser]
+# Evita prompt de onboarding/telemetria no startup.
+gatherUsageStats = false
 
 [global]
 # Best-effort: evitar prompts interativos de onboarding

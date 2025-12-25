@@ -105,12 +105,6 @@ def _open_local_browser(*args, **kwargs):
 def main():
     st.set_page_config(page_title="Gestão Infantil", layout="wide")
 
-    # Tenta abrir o navegador automaticamente (uma vez por sessão)
-    if not getattr(st.session_state, '_browser_opened', False):
-        st.session_state._browser_opened = True
-        import threading
-        threading.Thread(target=_open_browser, daemon=True).start()
-
     # ...existing code...
 
     try:
