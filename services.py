@@ -1,3 +1,35 @@
+def delete_debit(debit_id: int) -> bool:
+    conn = get_connection()
+    try:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute("DELETE FROM debits WHERE id = %s", (debit_id,))
+            deleted = cur.rowcount > 0
+            cur.close()
+            conn.commit()
+            return deleted
+        else:
+            cursor = conn.execute("DELETE FROM debits WHERE id = ?", (debit_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+    finally:
+        conn.close()
+def delete_task(task_id: int) -> bool:
+    conn = get_connection()
+    try:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+            deleted = cur.rowcount > 0
+            cur.close()
+            conn.commit()
+            return deleted
+        else:
+            cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+    finally:
+        conn.close()
 """Serviços (CRUD) e lógica do domínio utilizando sqlite3 explicitamente."""
 import hashlib
 import logging

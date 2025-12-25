@@ -6,7 +6,7 @@ import subprocess
 from db import init_db
 from services import (create_user, list_users, update_user_email, create_task, list_tasks, validate_task,
                       get_conversion, set_conversion, create_debit, get_report, seed_sample_data, save_user_photo,
-                      authenticate_user, get_user_by_email, update_user_password, list_debits, delete_user)
+                      authenticate_user, get_user_by_email, update_user_password, list_debits, delete_user, delete_task, delete_debit)
 # Envio de e-mail desabilitado por padrão para evitar falhas em ambientes sem SMTP
 
 import logging
@@ -335,7 +335,16 @@ def main():
             for t in tasks_all:
                 assignee = user_map[t.child_id].name if t.child_id in user_map else t.child_id
                 status = '✅ Validada' if t.validated else '⏳ Pendente'
-                st.write(f"{t.id} - {t.name} | {t.points} ({'R$' if t.conversion_type=='money' else 'h'}) | Para: {assignee} | {status}")
+                cols = st.columns([6,2])
+                cols[0].write(f"{t.id} - {t.name} | {t.points} ({'R$' if t.conversion_type=='money' else 'h'}) | Para: {assignee} | {status}")
+                if is_validator:
+                    if cols[1].button('Excluir', key=f'del_task_{t.id}'):
+                        ok = delete_task(t.id)
+                        if ok:
+                            st.success('Tarefa excluída com sucesso.')
+                            st.experimental_rerun()
+                        else:
+                            st.error('Falha ao excluir tarefa.')
 
     elif page == 'Validar':
         if not is_validator:
@@ -406,7 +415,16 @@ def main():
                     if d.hours_amount:
                         parts.append(f"{d.hours_amount:.2f} h")
                     pts = ', '.join(parts) if parts else '—'
-                    st.write(f"{d.id} | Para: {who} | Valor: {pts} | Por: {by} | Motivo: {d.reason or '-'} | {d.created_at}")
+                    cols = st.columns([8,2])
+                    cols[0].write(f"{d.id} | Para: {who} | Valor: {pts} | Por: {by} | Motivo: {d.reason or '-'} | {d.created_at}")
+                    if is_validator:
+                        if cols[1].button('Excluir', key=f'del_deb_{d.id}'):
+                            ok = delete_debit(d.id)
+                            if ok:
+                                st.success('Débito excluído com sucesso.')
+                                st.experimental_rerun()
+                            else:
+                                st.error('Falha ao excluir débito.')
 
     elif page == 'Usuários':
         if not is_validator:
@@ -425,6 +443,7 @@ def main():
                     if photo_file is not None:
                         save_user_photo(new_user.id, photo_file.read(), photo_file.name)
                     st.success('Usuário criado.')
+                    st.experimental_rerun()
 
             st.subheader('Lista de usuários')
             for u in list_users():
@@ -441,6 +460,7 @@ def main():
                         if st.button('Salvar e-mail', key=f'save_email_{u.id}'):
                             update_user_email(u.id, new_email)
                             st.success('E-mail atualizado.')
+                            st.experimental_rerun()
 
                         # Trocar senha
                         st.markdown('---')
@@ -449,6 +469,7 @@ def main():
                             try:
                                 update_user_password(u.id, new_pwd)
                                 st.success('Senha atualizada com sucesso.')
+                                st.experimental_rerun()
                             except Exception as exc:
                                 logging.exception('Falha ao atualizar senha do usuário')
                                 st.error(f'Erro ao atualizar senha: {exc}')
@@ -472,12 +493,10 @@ def main():
                                         st.session_state.user_id = None
                                         safe_rerun()
                                     else:
-                                        # Para exclusão de terceiros, não resetar sessão do usuário atual.
-                                        # A atualização da lista ocorrerá naturalmente na próxima interação.
-                                        pass
+                                        st.experimental_rerun()
                                 except Exception:
                                     # fallback: não forçar logout de outros usuários
-                                    pass
+                                    st.experimental_rerun()
                             else:
                                 st.error('Falha ao excluir usuário.')
 
