@@ -542,7 +542,8 @@ def seed_sample_data():
         if DB_KIND == "pg":
             cur = conn.cursor()
             cur.execute("SELECT COUNT(1) FROM users")
-            count = cur.fetchone()[0]
+            row = cur.fetchone()
+            count = list(row.values())[0] if isinstance(row, dict) else row[0]
             if count == 0:
                 logger.info("Inserindo usuários de exemplo")
                 cur.executemany(
@@ -556,9 +557,10 @@ def seed_sample_data():
             cur.execute("SELECT id FROM users WHERE password_hash IS NULL OR password_hash = ''")
             users_no_pwd = cur.fetchall()
             for row in users_no_pwd:
+                user_id = row.get("id") if isinstance(row, dict) else row[0]
                 cur.execute(
                     "UPDATE users SET password_hash = %s WHERE id = %s",
-                    (hash_password("123"), row["id"]),
+                    (hash_password("123"), user_id),
                 )
             cur.close()
             conn.commit()

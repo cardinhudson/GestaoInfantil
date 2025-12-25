@@ -61,10 +61,87 @@ def get_connection():
         conn.execute("PRAGMA journal_mode = WAL;")
         return conn
     # Postgres
-    import psycopg2
-    import psycopg2.extras
-    conn = psycopg2.connect(DB_TARGET, cursor_factory=psycopg2.extras.RealDictCursor)
-    return conn
+    # Prefer psycopg2 (RealDictCursor for dict-like rows). If it's not available
+    # try pg8000 as a pure-Python fallback (cursor with dictionary rows).
+    try:
+        import psycopg2
+        import psycopg2.extras
+
+        conn = psycopg2.connect(DB_TARGET, cursor_factory=psycopg2.extras.RealDictCursor)
+        return conn
+    except Exception:
+        logger.info("psycopg2 not available, trying pg8000 fallback")
+        try:
+            import pg8000
+            from urllib.parse import urlparse
+
+            parsed = urlparse(DB_TARGET)
+            user = parsed.username
+            password = parsed.password
+            host = parsed.hostname or "localhost"
+            port = int(parsed.port) if parsed.port else 5432
+            dbname = parsed.path.lstrip("/") or "postgres"
+
+            raw_conn = pg8000.connect(user=user, host=host, port=port, database=dbname, password=password)
+
+            class _PG8000Cursor:
+                def __init__(self, cur):
+                    self._cur = cur
+
+                def execute(self, *args, **kwargs):
+                    return self._cur.execute(*args, **kwargs)
+
+                def executemany(self, query, seq):
+                    for params in seq:
+                        self._cur.execute(query, params)
+                    return None
+
+                def fetchone(self):
+                    row = self._cur.fetchone()
+                    return _row_to_dict(self._cur, row)
+
+                def fetchall(self):
+                    rows = self._cur.fetchall()
+                    return [
+                        _row_to_dict(self._cur, r)
+                        for r in rows
+                    ]
+
+                def close(self):
+                    try:
+                        self._cur.close()
+                    except Exception:
+                        pass
+
+            def _row_to_dict(cur, row):
+                if row is None:
+                    return None
+                desc = getattr(cur, 'description', None)
+                if not desc:
+                    return row
+                names = [d[0] for d in desc]
+                if isinstance(row, dict):
+                    return row
+                if isinstance(row, (list, tuple)):
+                    return {names[i]: row[i] for i in range(len(names))}
+                return row
+
+            class _PG8000Conn:
+                def __init__(self, c):
+                    self._c = c
+
+                def cursor(self):
+                    return _PG8000Cursor(self._c.cursor())
+
+                def commit(self):
+                    return self._c.commit()
+
+                def close(self):
+                    return self._c.close()
+
+            return _PG8000Conn(raw_conn)
+        except Exception:
+            raise RuntimeError("Postgres driver not installed. Install psycopg2-binary or pg8000.")
 
 
 def init_db():

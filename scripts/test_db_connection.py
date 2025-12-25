@@ -27,24 +27,61 @@ def test_sqlite(path: str):
 
 
 def test_postgres(dsn: str):
+    # Prefer psycopg2, but fallback to pg8000 if psycopg2 isn't installed.
     try:
         import psycopg2
         import psycopg2.extras
-    except Exception as e:
-        print("psycopg2 não está instalado. Instale com: pip install psycopg2-binary")
-        raise
-    print("Testando Postgres com DSN (ocultando credenciais na saída)")
-    conn = psycopg2.connect(dsn, cursor_factory=psycopg2.extras.RealDictCursor)
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public'")
-        rows = cur.fetchall()
-        tables = [r['tablename'] for r in rows]
-        print("Tabelas públicas:", tables)
-        cur.close()
-        return True
-    finally:
-        conn.close()
+
+        print("Testando Postgres com psycopg2 (ocultando credenciais na saída)")
+        conn = psycopg2.connect(dsn, cursor_factory=psycopg2.extras.RealDictCursor)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public'")
+            rows = cur.fetchall()
+            tables = [r['tablename'] for r in rows]
+            print("Tabelas públicas:", tables)
+            cur.close()
+            return True
+        finally:
+            conn.close()
+    except Exception:
+        print("psycopg2 não disponível, tentando pg8000...")
+        try:
+            import pg8000
+            from urllib.parse import urlparse
+
+            parsed = urlparse(dsn)
+            user = parsed.username
+            password = parsed.password
+            host = parsed.hostname or 'localhost'
+            port = int(parsed.port) if parsed.port else 5432
+            dbname = parsed.path.lstrip('/') or 'postgres'
+
+            conn = pg8000.connect(user=user, host=host, port=port, database=dbname, password=password)
+            cur = conn.cursor()
+            cur.execute("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public'")
+            rows = cur.fetchall()
+            tables = []
+            for r in rows:
+                if isinstance(r, dict):
+                    tables.append(r.get('tablename'))
+                elif isinstance(r, (list, tuple)):
+                    tables.append(r[0])
+                else:
+                    tables.append(str(r))
+            print("Tabelas públicas:", tables)
+            try:
+                cur.close()
+            except Exception:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return True
+        except Exception:
+            print("Falha ao usar pg8000 para conectar ao Postgres")
+            raise
 
 
 def main():
