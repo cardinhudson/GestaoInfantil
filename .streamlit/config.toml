@@ -1,9 +1,12 @@
 [server]
 
-# Forçar modo headless em deploys (evita prompt interativo)
-headless = true
+# Headless desativado para abrir navegador localmente.
+# Em ambientes como Streamlit Cloud, o headless é forçado pela plataforma.
+headless = false
 port = 8501
-address = "0.0.0.0"
+# Para abrir no navegador local mostrando http://localhost:8501 em vez de 0.0.0.0,
+# defina o bind para localhost. Em cloud (Streamlit Cloud), eles sobrescrevem para 0.0.0.0.
+address = "localhost"
 enableCORS = true
 
 [global]
