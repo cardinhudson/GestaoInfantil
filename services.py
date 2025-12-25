@@ -564,8 +564,14 @@ def save_user_photo(user_id: int, file_bytes: bytes, original_filename: str) -> 
 
     conn = get_connection()
     try:
-        conn.execute("UPDATE users SET photo = ? WHERE id = ?", (path, user_id))
-        conn.commit()
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET photo = %s WHERE id = %s", (path, user_id))
+            conn.commit()
+            cur.close()
+        else:
+            conn.execute("UPDATE users SET photo = ? WHERE id = ?", (path, user_id))
+            conn.commit()
     finally:
         conn.close()
     return path

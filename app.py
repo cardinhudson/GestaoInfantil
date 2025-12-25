@@ -443,7 +443,7 @@ def main():
                     if photo_file is not None:
                         save_user_photo(new_user.id, photo_file.read(), photo_file.name)
                     st.success('Usuário criado.')
-                    st.experimental_rerun()
+                    st.stop()  # Mostra feedback e só recarrega na próxima ação do usuário
 
             st.subheader('Lista de usuários')
             for u in list_users():
