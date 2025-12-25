@@ -342,7 +342,7 @@ def main():
                         ok = delete_task(t.id)
                         if ok:
                             st.success('Tarefa excluída com sucesso.')
-                            st.experimental_rerun()
+                            st.stop()
                         else:
                             st.error('Falha ao excluir tarefa.')
 
@@ -422,7 +422,7 @@ def main():
                             ok = delete_debit(d.id)
                             if ok:
                                 st.success('Débito excluído com sucesso.')
-                                st.experimental_rerun()
+                                st.stop()
                             else:
                                 st.error('Falha ao excluir débito.')
 
@@ -460,7 +460,7 @@ def main():
                         if st.button('Salvar e-mail', key=f'save_email_{u.id}'):
                             update_user_email(u.id, new_email)
                             st.success('E-mail atualizado.')
-                            st.experimental_rerun()
+                            st.stop()
 
                         # Trocar senha
                         st.markdown('---')
@@ -469,7 +469,7 @@ def main():
                             try:
                                 update_user_password(u.id, new_pwd)
                                 st.success('Senha atualizada com sucesso.')
-                                st.experimental_rerun()
+                                st.stop()
                             except Exception as exc:
                                 logging.exception('Falha ao atualizar senha do usuário')
                                 st.error(f'Erro ao atualizar senha: {exc}')
@@ -491,12 +491,11 @@ def main():
                                 try:
                                     if st.session_state.get('user_id') == u.id:
                                         st.session_state.user_id = None
-                                        safe_rerun()
+                                        st.stop()
                                     else:
-                                        st.experimental_rerun()
+                                        st.stop()
                                 except Exception:
-                                    # fallback: não forçar logout de outros usuários
-                                    st.experimental_rerun()
+                                    st.stop()
                             else:
                                 st.error('Falha ao excluir usuário.')
 
