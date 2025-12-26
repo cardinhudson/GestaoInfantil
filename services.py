@@ -20,15 +20,16 @@ def upload_photo_supabase(user_id: int, file_bytes: bytes, original_filename: st
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/octet-stream"
     }
+    headers["x-upsert"] = "true"
     try:
-        resp = requests.post(url, headers=headers, data=file_bytes)
+        resp = requests.put(url, headers=headers, data=file_bytes)
         if not resp.ok:
             print(f"[Supabase Upload] Erro HTTP {resp.status_code}: {resp.text}")
         resp.raise_for_status()
     except Exception as e:
         print(f"[Supabase Upload] Falha ao enviar foto: {e}")
         print(f"URL: {url}")
-        print(f"Headers: {{'Authorization': 'Bearer ...', 'Content-Type': 'application/octet-stream'}}")
+        print(f"Headers: {{'Authorization': 'Bearer ...', 'Content-Type': 'application/octet-stream', 'x-upsert': 'true'}}")
         print(f"Tamanho do arquivo: {len(file_bytes)} bytes")
         raise
     # Gera URL pública
