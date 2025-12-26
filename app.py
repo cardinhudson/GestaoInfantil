@@ -456,6 +456,22 @@ def main():
                 # Ações: editar e excluir (com confirmação)
                 with cols_main[2]:
                     with st.expander('Ações'):
+                        if st.button('Editar usuário', key=f'edit_user_{u.id}'):
+                            st.session_state[f'edit_user_{u.id}'] = not st.session_state.get(f'edit_user_{u.id}', False)
+                        if st.session_state.get(f'edit_user_{u.id}', False):
+                            with st.form(f'edit_user_form_{u.id}'):
+                                new_name = st.text_input('Nome', value=u.name, key=f'edit_name_{u.id}')
+                                new_email = st.text_input('E-mail', value=u.email or '', key=f'edit_email_{u.id}')
+                                new_role = st.selectbox('Papel', ['child','validator'], index=0 if u.roles=='child' else 1, format_func=lambda x: 'Child' if x=='child' else 'Validador', key=f'edit_role_{u.id}')
+                                new_pwd = st.text_input('Nova senha (deixe em branco para manter)', type='password', key=f'edit_pwd_{u.id}')
+                                submitted_edit = st.form_submit_button('Salvar alterações')
+                                if submitted_edit:
+                                    from services import update_user_full
+                                    update_user_full(u.id, new_name, new_email, new_role, new_pwd if new_pwd else None)
+                                    st.success('Usuário atualizado.')
+                                    st.session_state[f'edit_user_{u.id}'] = False
+                                    st.stop()
+                        # Ações antigas
                         new_email = st.text_input(f'Editar email {u.id}', value=u.email or '', key=f'email_{u.id}')
                         if st.button('Salvar e-mail', key=f'save_email_{u.id}'):
                             update_user_email(u.id, new_email)

@@ -1,3 +1,65 @@
+
+from typing import Optional
+from supabase import create_client
+
+# Configurações do Supabase Storage
+SUPABASE_URL = "https://qusavydxnnctnrqfwoua.supabase.co"
+SUPABASE_KEY = "HudsonCardin1211"
+SUPABASE_BUCKET = "user-photos"
+
+def upload_photo_supabase(user_id: int, file_bytes: bytes, original_filename: str) -> str:
+    client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    ext = os.path.splitext(original_filename)[1].lower() or ".jpg"
+    fname = _safe_filename(f"user_{user_id}_{int(time.time())}{ext}")
+    path = f"users/{fname}"
+    # Faz upload
+    client.storage.from_(SUPABASE_BUCKET).upload(path, file_bytes, upsert=True)
+    # Gera URL pública
+    url = client.storage.from_(SUPABASE_BUCKET).get_public_url(path)
+    return url
+def get_user_by_id(user_id: int) -> "Optional[User]":
+    conn = get_connection()
+    try:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+            cur.close()
+        else:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            row = cur.fetchone()
+            cur.close()
+        return _row_to_user(row)
+    finally:
+        conn.close()
+def update_user_full(user_id: int, name: str, email: str, roles: str, password: str = None) -> "Optional[User]":
+    conn = get_connection()
+    try:
+        if DB_KIND == "pg":
+            cur = conn.cursor()
+            if password:
+                cur.execute("UPDATE users SET name = %s, email = %s, roles = %s, password_hash = %s WHERE id = %s",
+                            (name, email, roles, hash_password(password), user_id))
+            else:
+                cur.execute("UPDATE users SET name = %s, email = %s, roles = %s WHERE id = %s",
+                            (name, email, roles, user_id))
+            conn.commit()
+            cur.close()
+        else:
+            cur = conn.cursor()
+            if password:
+                cur.execute("UPDATE users SET name = ?, email = ?, roles = ?, password_hash = ? WHERE id = ?",
+                            (name, email, roles, hash_password(password), user_id))
+            else:
+                cur.execute("UPDATE users SET name = ?, email = ?, roles = ? WHERE id = ?",
+                            (name, email, roles, user_id))
+            conn.commit()
+            cur.close()
+        # Retorna o usuário atualizado
+        return get_user_by_id(user_id)
+    finally:
+        conn.close()
 def delete_debit(debit_id: int) -> bool:
     conn = get_connection()
     try:
@@ -37,6 +99,7 @@ import os
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
+from models import User
 
 from db import DB_KIND, get_connection
 from models import Conversion, Debit, Task, User
@@ -553,30 +616,23 @@ def _safe_filename(name: str) -> str:
 
 
 def save_user_photo(user_id: int, file_bytes: bytes, original_filename: str) -> str:
-    ensure_uploads_dir()
-    ts = int(time.time())
-    ext = os.path.splitext(original_filename)[1].lower() or ".jpg"
-    fname = _safe_filename(f"user_{user_id}_{ts}{ext}")
-    path = os.path.join(UPLOADS_DIR, "users", fname)
-
-    with open(path, "wb") as fh:
-        fh.write(file_bytes)
-
+    # Salva no Supabase Storage e obtém URL pública
+    url = upload_photo_supabase(user_id, file_bytes, original_filename)
     conn = get_connection()
     try:
         if DB_KIND == "pg":
             cur = conn.cursor()
-            cur.execute("UPDATE users SET photo = %s WHERE id = %s", (path, user_id))
+            cur.execute("UPDATE users SET photo = %s WHERE id = %s", (url, user_id))
             conn.commit()
             cur.close()
         else:
             cur = conn.cursor()
-            cur.execute("UPDATE users SET photo = ? WHERE id = ?", (path, user_id))
+            cur.execute("UPDATE users SET photo = ? WHERE id = ?", (url, user_id))
             conn.commit()
             cur.close()
     finally:
         conn.close()
-    return path
+    return url
 
 
 def seed_sample_data():

@@ -1,9 +1,11 @@
 [server]
 
-# Cloud-safe defaults. Streamlit Cloud exige headless e bind em 0.0.0.0.
-headless = true
+# Configuração automática: local abre navegador, cloud usa headless
+import os
+is_cloud = os.environ.get("STREAMLIT_CLOUD", "0") == "1"
+headless = is_cloud
+address = "0.0.0.0" if is_cloud else "localhost"
 port = 8501
-address = "0.0.0.0"
 enableCORS = true
 
 [browser]
