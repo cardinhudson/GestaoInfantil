@@ -4,21 +4,37 @@ import requests
 import os
 
 # Configurações do Supabase Storage
-# Tenta ler de st.secrets (Streamlit Cloud) ou de variáveis de ambiente (local)
-try:
-    import streamlit as st
-    SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL", "https://qusavydxnnctnrqfwoua.supabase.co"))
-    SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY", ""))
-    SUPABASE_BUCKET = st.secrets.get("SUPABASE_BUCKET", os.environ.get("SUPABASE_BUCKET", "user-photos"))
-except:
-    # Fallback para variáveis de ambiente se streamlit não estiver disponível
-    SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://qusavydxnnctnrqfwoua.supabase.co")
-    SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
-    SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "user-photos")
+# Lê de st.secrets (Streamlit Cloud) ou variáveis de ambiente (local)
+def get_supabase_config():
+    supabase_url = "https://qusavydxnnctnrqfwoua.supabase.co"
+    supabase_key = ""
+    supabase_bucket = "user-photos"
+    
+    try:
+        import streamlit as st
+        # Tenta ler do st.secrets primeiro (Streamlit Cloud)
+        if hasattr(st, 'secrets') and st.secrets:
+            supabase_url = st.secrets.get("SUPABASE_URL", supabase_url)
+            supabase_key = st.secrets.get("SUPABASE_KEY", "")
+            supabase_bucket = st.secrets.get("SUPABASE_BUCKET", supabase_bucket)
+            if supabase_key:
+                print(f"[Supabase] Chave carregada de st.secrets (comprimento: {len(supabase_key)})")
+    except Exception as e:
+        print(f"[Supabase] Não foi possível ler st.secrets: {e}")
+    
+    # Fallback para variáveis de ambiente
+    if not supabase_key:
+        supabase_key = os.environ.get("SUPABASE_KEY", "")
+        if supabase_key:
+            print(f"[Supabase] Chave carregada de os.environ (comprimento: {len(supabase_key)})")
+    
+    if not supabase_key:
+        print("[AVISO] SUPABASE_KEY não foi carregada!")
+    
+    return supabase_url, supabase_key, supabase_bucket
 
-# Debug: verifica se as variáveis estão carregadas
-if not SUPABASE_KEY:
-    print("[AVISO] SUPABASE_KEY não foi carregada do ambiente!")
+SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET = get_supabase_config()
+
 
 
 def upload_photo_supabase(user_id: int, file_bytes: bytes, original_filename: str) -> str:
