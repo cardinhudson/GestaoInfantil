@@ -1,22 +1,30 @@
 
 from typing import Optional
-from supabase import create_client
+import requests
+
+# Configurações do Supabase Storage
 
 # Configurações do Supabase Storage
 SUPABASE_URL = "https://qusavydxnnctnrqfwoua.supabase.co"
-SUPABASE_KEY = "HudsonCardin1211"
 SUPABASE_BUCKET = "user-photos"
+# Use a service_role para upload seguro (NUNCA exponha no frontend)
+SUPABASE_KEY = "HudsonCardin1211"
 
 def upload_photo_supabase(user_id: int, file_bytes: bytes, original_filename: str) -> str:
-    client = create_client(SUPABASE_URL, SUPABASE_KEY)
     ext = os.path.splitext(original_filename)[1].lower() or ".jpg"
     fname = _safe_filename(f"user_{user_id}_{int(time.time())}{ext}")
     path = f"users/{fname}"
-    # Faz upload
-    client.storage.from_(SUPABASE_BUCKET).upload(path, file_bytes, upsert=True)
+    # Upload do arquivo
+    url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{path}"
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/octet-stream"
+    }
+    resp = requests.post(url, headers=headers, data=file_bytes)
+    resp.raise_for_status()
     # Gera URL pública
-    url = client.storage.from_(SUPABASE_BUCKET).get_public_url(path)
-    return url
+    public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{path}"
+    return public_url
 def get_user_by_id(user_id: int) -> "Optional[User]":
     conn = get_connection()
     try:
