@@ -1,17 +1,9 @@
 [server]
-
-# Configuração automática: local abre navegador, cloud usa headless
-import os
-is_cloud = os.environ.get("STREAMLIT_CLOUD", "0") == "1"
-headless = is_cloud
-address = "0.0.0.0" if is_cloud else "localhost"
+headless = true
+address = "0.0.0.0"
 port = 8501
 enableCORS = true
 
 [browser]
-# Evita prompt de onboarding/telemetria no startup.
 gatherUsageStats = false
 
-[global]
-# Best-effort: evitar prompts interativos de onboarding
-# hideOnboarding = true  # Removido: opção inválida
