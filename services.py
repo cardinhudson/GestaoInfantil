@@ -1,14 +1,16 @@
 
 from typing import Optional
 import requests
+import os
 
-# Configurações do Supabase Storage
+# Configurações do Supabase Storage (lê de variáveis de ambiente)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://qusavydxnnctnrqfwoua.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "user-photos")
 
-# Configurações do Supabase Storage
-SUPABASE_URL = "https://qusavydxnnctnrqfwoua.supabase.co"
-SUPABASE_BUCKET = "user-photos"
-# Use a service_role para upload seguro (NUNCA exponha no frontend)
-SUPABASE_KEY = "HudsonCardin1211"
+# Debug: verifica se as variáveis estão carregadas
+if not SUPABASE_KEY:
+    print("[AVISO] SUPABASE_KEY não foi carregada do ambiente!")
 
 def upload_photo_supabase(user_id: int, file_bytes: bytes, original_filename: str) -> str:
     ext = os.path.splitext(original_filename)[1].lower() or ".jpg"
