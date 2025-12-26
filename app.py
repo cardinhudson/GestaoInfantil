@@ -339,12 +339,15 @@ def main():
                 cols[0].write(f"{t.id} - {t.name} | {t.points} ({'R$' if t.conversion_type=='money' else 'h'}) | Para: {assignee} | {status}")
                 if is_validator:
                     if cols[1].button('Excluir', key=f'del_task_{t.id}'):
-                        ok = delete_task(t.id)
-                        if ok:
-                            st.success('Tarefa excluída com sucesso.')
-                            st.stop()
-                        else:
-                            st.error('Falha ao excluir tarefa.')
+                        try:
+                            ok = delete_task(t.id)
+                            if ok:
+                                st.success('✅ Tarefa excluída com sucesso.')
+                            else:
+                                st.error('❌ Falha ao excluir tarefa.')
+                        except Exception as exc:
+                            logging.exception('Erro ao excluir tarefa')
+                            st.error(f'❌ Erro: {str(exc)}')
 
     elif page == 'Validar':
         if not is_validator:
@@ -419,12 +422,15 @@ def main():
                     cols[0].write(f"{d.id} | Para: {who} | Valor: {pts} | Por: {by} | Motivo: {d.reason or '-'} | {d.created_at}")
                     if is_validator:
                         if cols[1].button('Excluir', key=f'del_deb_{d.id}'):
-                            ok = delete_debit(d.id)
-                            if ok:
-                                st.success('Débito excluído com sucesso.')
-                                st.stop()
-                            else:
-                                st.error('Falha ao excluir débito.')
+                            try:
+                                ok = delete_debit(d.id)
+                                if ok:
+                                    st.success('✅ Débito excluído com sucesso.')
+                                else:
+                                    st.error('❌ Falha ao excluir débito.')
+                            except Exception as exc:
+                                logging.exception('Erro ao excluir débito')
+                                st.error(f'❌ Erro: {str(exc)}')
 
     elif page == 'Usuários':
         if not is_validator:
@@ -440,15 +446,23 @@ def main():
                 submitted = st.form_submit_button('Criar usuário')
                 if submitted:
                     try:
-                        new_user = create_user(name=name, email=email, roles=role, password=password)
-                        if photo_file is not None:
-                            try:
-                                save_user_photo(new_user.id, photo_file.read(), photo_file.name)
-                            except Exception as e:
-                                st.warning(f'⚠️ Usuário criado, mas erro ao fazer upload da foto: {str(e)}')
-                        st.success('Usuário criado.')
-                        st.stop()  # Mostra feedback e só recarrega na próxima ação do usuário
+                        if not name or not email or not password:
+                            st.error('❌ Nome, e-mail e senha são obrigatórios.')
+                        else:
+                            new_user = create_user(name=name, email=email, roles=role, password=password)
+                            photo_uploaded = True
+                            if photo_file is not None:
+                                try:
+                                    save_user_photo(new_user.id, photo_file.read(), photo_file.name)
+                                except Exception as e:
+                                    photo_uploaded = False
+                                    st.warning(f'⚠️ Usuário criado, mas erro ao fazer upload da foto: {str(e)}')
+                            if photo_uploaded:
+                                st.success('✅ Usuário criado com sucesso!')
+                            else:
+                                st.success('✅ Usuário criado (foto não foi salva).')
                     except Exception as e:
+                        logging.exception('Erro ao criar usuário')
                         st.error(f'❌ Erro ao criar usuário: {str(e)}')
 
             st.subheader('Lista de usuários')
@@ -472,54 +486,66 @@ def main():
                                 new_pwd = st.text_input('Nova senha (deixe em branco para manter)', type='password', key=f'edit_pwd_{u.id}')
                                 submitted_edit = st.form_submit_button('Salvar alterações')
                                 if submitted_edit:
-                                    from services import update_user_full
-                                    update_user_full(u.id, new_name, new_email, new_role, new_pwd if new_pwd else None)
-                                    st.success('Usuário atualizado.')
-                                    st.session_state[f'edit_user_{u.id}'] = False
-                                    st.stop()
-                        # Ações antigas
-                        new_email = st.text_input(f'Editar email {u.id}', value=u.email or '', key=f'email_{u.id}')
+                                    try:
+                                        from services import update_user_full
+                                        update_user_full(u.id, new_name, new_email, new_role, new_pwd if new_pwd else None)
+                                        st.success('✅ Usuário atualizado com sucesso!')
+                                        st.session_state[f'edit_user_{u.id}'] = False
+                                    except Exception as exc:
+                                        logging.exception('Erro ao atualizar usuário')
+                                        st.error(f'❌ Erro ao atualizar: {str(exc)}')
+                        # Ações antigas - Editar e-mail (via input direto)
+                        new_email_direct = st.text_input(f'Editar email {u.id}', value=u.email or '', key=f'email_{u.id}')
                         if st.button('Salvar e-mail', key=f'save_email_{u.id}'):
-                            update_user_email(u.id, new_email)
-                            st.success('E-mail atualizado.')
-                            st.stop()
+                            try:
+                                if new_email_direct and '@' in new_email_direct:
+                                    update_user_email(u.id, new_email_direct)
+                                    st.success('✅ E-mail atualizado com sucesso!')
+                                else:
+                                    st.error('❌ E-mail inválido.')
+                            except Exception as exc:
+                                logging.exception('Erro ao atualizar e-mail')
+                                st.error(f'❌ Erro ao atualizar e-mail: {str(exc)}')
 
                         # Trocar senha
                         st.markdown('---')
-                        new_pwd = st.text_input(f'Nova senha para {u.name} (deixe em branco para manter)', type='password', key=f'pwd_{u.id}')
-                        if new_pwd and st.button('Alterar senha', key=f'chg_pwd_{u.id}'):
+                        new_pwd_form = st.text_input(f'Nova senha para {u.name} (deixe em branco para manter)', type='password', key=f'pwd_{u.id}')
+                        if new_pwd_form and st.button('Alterar senha', key=f'chg_pwd_{u.id}'):
                             try:
-                                update_user_password(u.id, new_pwd)
-                                st.success('Senha atualizada com sucesso.')
-                                st.stop()
+                                if len(new_pwd_form) < 4:
+                                    st.error('❌ Senha deve ter pelo menos 4 caracteres.')
+                                else:
+                                    update_user_password(u.id, new_pwd_form)
+                                    st.success('✅ Senha atualizada com sucesso!')
                             except Exception as exc:
                                 logging.exception('Falha ao atualizar senha do usuário')
-                                st.error(f'Erro ao atualizar senha: {exc}')
+                                st.error(f'❌ Erro ao atualizar senha: {str(exc)}')
 
                         st.markdown('---')
                         st.write('Excluir usuário (irrevogável)')
                         confirm = st.checkbox('Confirmar exclusão', key=f'confirm_{u.id}')
                         if confirm and st.button('Excluir usuário', key=f'delete_{u.id}'):
-                            # remover foto do disco se existir
                             try:
+                                # remover foto do disco se existir
                                 if u.photo and os.path.exists(u.photo):
-                                    os.remove(u.photo)
-                            except Exception:
-                                logging.exception('Falha ao remover foto do usuário')
-                            ok = delete_user(u.id)
-                            if ok:
-                                st.success('Usuário excluído com sucesso.')
-                                # Se o usuário excluído for o que está logado, encerrar sessão e forçar rerun.
-                                try:
+                                    try:
+                                        os.remove(u.photo)
+                                    except Exception as e:
+                                        logging.warning(f'Falha ao remover foto: {e}')
+                                
+                                # excluir do banco
+                                ok = delete_user(u.id)
+                                if ok:
+                                    st.success('✅ Usuário excluído com sucesso.')
+                                    # Se o usuário excluído for o que está logado, fazer logout
                                     if st.session_state.get('user_id') == u.id:
                                         st.session_state.user_id = None
-                                        st.stop()
-                                    else:
-                                        st.stop()
-                                except Exception:
-                                    st.stop()
-                            else:
-                                st.error('Falha ao excluir usuário.')
+                                        st.info('Você foi desconectado. Recarregue a página.')
+                                else:
+                                    st.error('❌ Falha ao excluir usuário.')
+                            except Exception as exc:
+                                logging.exception('Erro ao excluir usuário')
+                                st.error(f'❌ Erro ao excluir: {str(exc)}')
 
 
 if __name__ == '__main__':
