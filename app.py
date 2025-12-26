@@ -456,7 +456,7 @@ def main():
                 # Ações: editar e excluir (com confirmação)
                 with cols_main[2]:
                     with st.expander('Ações'):
-                        if st.button('Editar usuário', key=f'edit_user_{u.id}'):
+                        if st.button('Editar usuário', key=f'edit_user_btn_{u.id}'):
                             st.session_state[f'edit_user_{u.id}'] = not st.session_state.get(f'edit_user_{u.id}', False)
                         if st.session_state.get(f'edit_user_{u.id}', False):
                             with st.form(f'edit_user_form_{u.id}'):
