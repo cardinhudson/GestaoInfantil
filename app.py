@@ -439,11 +439,17 @@ def main():
                 photo_file = st.file_uploader('Foto (png/jpg)', type=['png','jpg','jpeg'])
                 submitted = st.form_submit_button('Criar usuário')
                 if submitted:
-                    new_user = create_user(name=name, email=email, roles=role, password=password)
-                    if photo_file is not None:
-                        save_user_photo(new_user.id, photo_file.read(), photo_file.name)
-                    st.success('Usuário criado.')
-                    st.stop()  # Mostra feedback e só recarrega na próxima ação do usuário
+                    try:
+                        new_user = create_user(name=name, email=email, roles=role, password=password)
+                        if photo_file is not None:
+                            try:
+                                save_user_photo(new_user.id, photo_file.read(), photo_file.name)
+                            except Exception as e:
+                                st.warning(f'⚠️ Usuário criado, mas erro ao fazer upload da foto: {str(e)}')
+                        st.success('Usuário criado.')
+                        st.stop()  # Mostra feedback e só recarrega na próxima ação do usuário
+                    except Exception as e:
+                        st.error(f'❌ Erro ao criar usuário: {str(e)}')
 
             st.subheader('Lista de usuários')
             for u in list_users():
