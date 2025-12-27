@@ -53,8 +53,7 @@ DB_PATH = None
 logger.info("Using Postgres database via GESTAO_DB/DATABASE_URL")
 
 
-
-
+def get_connection():
     # Apenas Postgres/Supabase
     try:
         import psycopg2
