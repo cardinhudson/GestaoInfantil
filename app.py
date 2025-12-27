@@ -1,3 +1,12 @@
+print("=== INÍCIO DO APP.PY ===", flush=True)
+import sys
+import os
+try:
+    print(f"Python: {sys.version}")
+    print(f"CWD: {os.getcwd()}")
+    print(f"FILES: {os.listdir('.')}")
+except Exception as e:
+    print(f"[ERRO AO LOGAR AMBIENTE]: {e}")
 """Streamlit App: Gestão de Tarefas Infantis"""
 import streamlit as st
 import os
