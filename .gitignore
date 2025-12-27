@@ -3,6 +3,7 @@ uploads/
 .env
 .venv/
 logs/
+__pycache__/
 
 # Secrets do Streamlit (NÃO comitar)
 .streamlit/secrets.toml
