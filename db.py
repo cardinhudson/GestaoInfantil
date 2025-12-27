@@ -16,19 +16,23 @@ logger = logging.getLogger(__name__)
 
 def _get_db_target_from_env() -> Optional[str]:
     # Força uso do Postgres/Supabase. Não permite fallback para SQLite.
-    target = os.environ.get("GESTAO_DB")
+    target = os.environ.get("GESTAO_DB") or os.environ.get("DATABASE_URL")
     if target:
         return target
     try:
         import streamlit as _st  # type: ignore
         secrets = getattr(_st, "secrets", None)
-        if isinstance(secrets, dict):
-            if secrets.get("GESTAO_DB"):
-                return secrets["GESTAO_DB"]
-            if secrets.get("DATABASE_URL"):
-                return secrets["DATABASE_URL"]
-    except Exception:
-        pass
+        if secrets is not None:
+            # Streamlit Cloud: secrets é um objeto SecretsMapping, não dict
+            try:
+                if "GESTAO_DB" in secrets:
+                    return secrets["GESTAO_DB"]
+                if "DATABASE_URL" in secrets:
+                    return secrets["DATABASE_URL"]
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"Não foi possível ler st.secrets: {e}")
     # Se não encontrar, ERRO explícito
     raise RuntimeError("\n[ERRO] Nenhuma configuração de banco Postgres/Supabase encontrada!\n\nAdicione GESTAO_DB ou DATABASE_URL nas secrets do Streamlit ou variáveis de ambiente, no formato:\nGESTAO_DB = 'postgres://usuario:senha@host:porta/database'\n\nNão é mais permitido usar SQLite local.\n")
 
