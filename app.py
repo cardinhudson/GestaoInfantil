@@ -484,12 +484,21 @@ def main():
                                 new_email = st.text_input('E-mail', value=u.email or '', key=f'edit_email_{u.id}')
                                 new_role = st.selectbox('Papel', ['child','validator'], index=0 if u.roles=='child' else 1, format_func=lambda x: 'Child' if x=='child' else 'Validador', key=f'edit_role_{u.id}')
                                 new_pwd = st.text_input('Nova senha (deixe em branco para manter)', type='password', key=f'edit_pwd_{u.id}')
+                                new_photo = st.file_uploader('Nova foto (opcional)', type=['png','jpg','jpeg'], key=f'edit_photo_{u.id}')
                                 submitted_edit = st.form_submit_button('Salvar alterações')
                                 if submitted_edit:
                                     try:
                                         from services import update_user_full
                                         update_user_full(u.id, new_name, new_email, new_role, new_pwd if new_pwd else None)
-                                        st.success('✅ Usuário atualizado com sucesso!')
+                                        # Atualizar foto se foi enviada
+                                        if new_photo is not None:
+                                            try:
+                                                save_user_photo(u.id, new_photo.read(), new_photo.name)
+                                                st.success('✅ Usuário e foto atualizados com sucesso!')
+                                            except Exception as photo_exc:
+                                                st.warning(f'⚠️ Usuário atualizado, mas erro na foto: {str(photo_exc)}')
+                                        else:
+                                            st.success('✅ Usuário atualizado com sucesso!')
                                         st.session_state[f'edit_user_{u.id}'] = False
                                     except Exception as exc:
                                         logging.exception('Erro ao atualizar usuário')
