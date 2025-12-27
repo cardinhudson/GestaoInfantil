@@ -48,28 +48,70 @@ def _resolve_sqlite_path(target: Optional[str]) -> Path:
     return path.resolve()
 
 
+# Variáveis globais - inicializadas de forma lazy
+_DB_TARGET = None
+_DB_KIND = None
+_DB_PATH = None
+_initialized = False
 
-DB_TARGET = _get_db_target_from_env()
-if not DB_TARGET or not DB_TARGET.startswith("postgres"):
-    raise RuntimeError("\n[ERRO] O sistema exige configuração de banco Postgres/Supabase.\nConfigure GESTAO_DB ou DATABASE_URL nas secrets/ambiente.\n")
-DB_KIND = "pg"
+
+def _ensure_initialized():
+    global _DB_TARGET, _DB_KIND, _DB_PATH, _initialized
+    if _initialized:
+        return
+    _DB_TARGET = _get_db_target_from_env()
+    if not _DB_TARGET or not _DB_TARGET.startswith("postgres"):
+        raise RuntimeError("\n[ERRO] O sistema exige configuração de banco Postgres/Supabase.\nConfigure GESTAO_DB ou DATABASE_URL nas secrets/ambiente.\n")
+    _DB_KIND = "pg"
+    _DB_PATH = None
+    _initialized = True
+    logger.info("Using Postgres database via GESTAO_DB/DATABASE_URL")
+
+
+# Propriedades para acesso às variáveis (compatibilidade)
+@property
+def DB_TARGET():
+    _ensure_initialized()
+    return _DB_TARGET
+
+
+@property
+def DB_KIND():
+    _ensure_initialized()
+    return _DB_KIND
+
+
+# Para compatibilidade com código existente que importa DB_TARGET e DB_KIND
+def _get_db_target():
+    _ensure_initialized()
+    return _DB_TARGET
+
+
+def _get_db_kind():
+    _ensure_initialized()
+    return _DB_KIND
+
+
+# Alias para compatibilidade
+DB_TARGET = None  # Será inicializado na primeira chamada a get_connection()
+DB_KIND = "pg"  # Assume Postgres por padrão
 DB_PATH = None
-logger.info("Using Postgres database via GESTAO_DB/DATABASE_URL")
 
 
 def get_connection():
+    _ensure_initialized()
     # Apenas Postgres/Supabase
     try:
         import psycopg2
         import psycopg2.extras
-        conn = psycopg2.connect(DB_TARGET, cursor_factory=psycopg2.extras.RealDictCursor)
+        conn = psycopg2.connect(_DB_TARGET, cursor_factory=psycopg2.extras.RealDictCursor)
         return conn
     except Exception:
         logger.info("psycopg2 not available, trying pg8000 fallback")
         try:
             import pg8000
             from urllib.parse import urlparse
-            parsed = urlparse(DB_TARGET)
+            parsed = urlparse(_DB_TARGET)
             user = parsed.username
             password = parsed.password
             host = parsed.hostname or "localhost"
@@ -81,9 +123,10 @@ def get_connection():
             raise RuntimeError("Postgres driver not installed. Install psycopg2-binary ou pg8000.")
 
 def init_db():
+    _ensure_initialized()
     conn = get_connection()
     try:
-        if DB_KIND == "sqlite":
+        if _DB_KIND == "sqlite":
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS users (
