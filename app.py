@@ -35,24 +35,6 @@ def safe_rerun():
         raise
 
 
-def _open_browser():
-    """Tenta abrir o navegador no localhost:8501 após um delay."""
-    import time
-    import webbrowser
-    import subprocess
-    import os
-    time.sleep(2)  # Aguarda o servidor iniciar
-    url = 'http://localhost:8501'
-    try:
-        if os.name == 'nt':  # Windows
-            subprocess.run(['cmd', '/c', 'start', url], check=False, shell=False)
-        else:
-            webbrowser.open(url)
-        logging.info(f'Navegador aberto automaticamente em {url}')
-    except Exception as e:
-        logging.debug(f'Falha ao abrir navegador: {e}')
-
-
 # Logging setup
 LOG_DIR = os.environ.get('GESTAO_LOGS', 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -83,13 +65,18 @@ try:
 except Exception:
     pass
 
-# Evita múltiplos disparos de abertura de navegador em reruns do Streamlit
-_AUTO_BROWSER_STARTED = False
-
-
 def photo_or_placeholder(user, width=60):
+    """Retorna o caminho/URL da foto do usuário se existir.
+    Aceita tanto URLs HTTP (Supabase) quanto paths locais.
+    """
     path = getattr(user, 'photo', None)
-    if path and os.path.exists(path):
+    if not path:
+        return None
+    # Se for URL HTTP (Supabase Storage), retorna diretamente
+    if path.startswith('http://') or path.startswith('https://'):
+        return path
+    # Se for path local, verifica se existe
+    if os.path.exists(path):
         return path
     return None
 
@@ -98,14 +85,8 @@ def is_role(user, role):
     return role in (user.roles or "").split(',')
 
 
-def _open_local_browser(*args, **kwargs):
-    pass
-
-
 def main():
     st.set_page_config(page_title="Gestão Infantil", layout="wide")
-
-    # ...existing code...
 
     try:
         init_db()
@@ -177,8 +158,9 @@ def main():
     # Cabeçalho: mostrar foto e nome do usuário logado antes de tudo (acima do título)
     try:
         hdr_col1, hdr_col2 = st.columns([1, 8])
-        if getattr(current_user, 'photo', None) and os.path.exists(current_user.photo):
-            hdr_col1.image(current_user.photo, width=64)
+        header_photo = photo_or_placeholder(current_user)
+        if header_photo:
+            hdr_col1.image(header_photo, width=64)
         else:
             hdr_col1.write('')
         hdr_col2.markdown(f"**{current_user.name}**")
@@ -273,8 +255,9 @@ def main():
         money = r['money']
         hours = r['hours']
         col_photo, col_money, col_hours = st.columns([1,2,2])
-        if u.photo and os.path.exists(u.photo):
-            col_photo.image(u.photo, width=90)
+        dash_photo = photo_or_placeholder(u)
+        if dash_photo:
+            col_photo.image(dash_photo, width=90)
         else:
             col_photo.write('Sem foto')
         col_money.metric("Saldo em R$", f"R$ {money:.2f}")
@@ -468,8 +451,9 @@ def main():
             st.subheader('Lista de usuários')
             for u in list_users():
                 cols_main = st.columns([1,4,1])
-                if u.photo and os.path.exists(u.photo):
-                    cols_main[0].image(u.photo, width=80)
+                photo_url = photo_or_placeholder(u)
+                if photo_url:
+                    cols_main[0].image(photo_url, width=80)
                 else:
                     cols_main[0].write('Sem foto')
                 cols_main[1].write(f"{u.name} | {u.email or 'sem e-mail'} | {u.roles}")
@@ -486,8 +470,9 @@ def main():
                                 new_pwd = st.text_input('Nova senha (deixe em branco para manter)', type='password', key=f'edit_pwd_{u.id}')
                                 st.markdown('---')
                                 st.markdown('**Foto do usuário:**')
-                                if u.photo:
-                                    st.image(u.photo, width=80, caption='Foto atual')
+                                edit_photo_url = photo_or_placeholder(u)
+                                if edit_photo_url:
+                                    st.image(edit_photo_url, width=80, caption='Foto atual')
                                 else:
                                     st.info('Nenhuma foto cadastrada para este usuário.')
                                 new_photo = st.file_uploader('Nova foto (opcional)', type=['png','jpg','jpeg'], key=f'edit_photo_{u.id}')
@@ -542,8 +527,8 @@ def main():
                         confirm = st.checkbox('Confirmar exclusão', key=f'confirm_{u.id}')
                         if confirm and st.button('Excluir usuário', key=f'delete_{u.id}'):
                             try:
-                                # remover foto do disco se existir
-                                if u.photo and os.path.exists(u.photo):
+                                # remover foto do disco se existir (apenas paths locais, não URLs)
+                                if u.photo and not u.photo.startswith('http') and os.path.exists(u.photo):
                                     try:
                                         os.remove(u.photo)
                                     except Exception as e:
@@ -567,6 +552,7 @@ def main():
 if __name__ == '__main__':
     try:
         logging.info("Starting Gestão Infantil app")
+        # O navegador é aberto automaticamente pelo Streamlit (config.toml: headless = false)
         main()
     except Exception:
         logging.exception("Unhandled exception running app")
