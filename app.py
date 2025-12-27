@@ -93,12 +93,12 @@ def is_role(user, role):
 
 def main():
 
+    st.set_page_config(page_title="Gestão Infantil", layout="wide")
+
     # Diagnóstico explícito para Streamlit Cloud: print/log no início
-    st.write(':blue[Iniciando app Gestão Infantil - diagnóstico Streamlit Cloud]')
+    st.caption(':blue[Iniciando app Gestão Infantil - diagnóstico Streamlit Cloud]')
     print('==== [DEBUG] Entrou no main() do app.py ====', flush=True)
     logging.info('==== [DEBUG] Entrou no main() do app.py ====')
-
-    st.set_page_config(page_title="Gestão Infantil", layout="wide")
 
     try:
         init_db()
