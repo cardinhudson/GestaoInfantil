@@ -13,13 +13,14 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+
 def _get_db_target_from_env() -> Optional[str]:
+    # Força uso do Postgres/Supabase. Não permite fallback para SQLite.
     target = os.environ.get("GESTAO_DB")
     if target:
         return target
     try:
         import streamlit as _st  # type: ignore
-
         secrets = getattr(_st, "secrets", None)
         if isinstance(secrets, dict):
             if secrets.get("GESTAO_DB"):
@@ -27,8 +28,9 @@ def _get_db_target_from_env() -> Optional[str]:
             if secrets.get("DATABASE_URL"):
                 return secrets["DATABASE_URL"]
     except Exception:
-        return None
-    return None
+        pass
+    # Se não encontrar, ERRO explícito
+    raise RuntimeError("\n[ERRO] Nenhuma configuração de banco Postgres/Supabase encontrada!\n\nAdicione GESTAO_DB ou DATABASE_URL nas secrets do Streamlit ou variáveis de ambiente, no formato:\nGESTAO_DB = 'postgres://usuario:senha@host:porta/database'\n\nNão é mais permitido usar SQLite local.\n")
 
 
 def _resolve_sqlite_path(target: Optional[str]) -> Path:
@@ -42,31 +44,21 @@ def _resolve_sqlite_path(target: Optional[str]) -> Path:
     return path.resolve()
 
 
+
 DB_TARGET = _get_db_target_from_env()
-DB_KIND = "pg" if DB_TARGET and DB_TARGET.startswith("postgres") else "sqlite"
-
-if DB_KIND == "sqlite":
-    DB_PATH = _resolve_sqlite_path(DB_TARGET)
-    logger.info(f"Using SQLite database at {DB_PATH}")
-else:
-    DB_PATH = None
-    logger.info("Using Postgres database via GESTAO_DB/DATABASE_URL")
+if not DB_TARGET or not DB_TARGET.startswith("postgres"):
+    raise RuntimeError("\n[ERRO] O sistema exige configuração de banco Postgres/Supabase.\nConfigure GESTAO_DB ou DATABASE_URL nas secrets/ambiente.\n")
+DB_KIND = "pg"
+DB_PATH = None
+logger.info("Using Postgres database via GESTAO_DB/DATABASE_URL")
 
 
-def get_connection():
-    if DB_KIND == "sqlite":
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False, detect_types=sqlite3.PARSE_DECLTYPES)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON;")
-        conn.execute("PRAGMA journal_mode = WAL;")
-        return conn
-    # Postgres
-    # Prefer psycopg2 (RealDictCursor for dict-like rows). If it's not available
-    # try pg8000 as a pure-Python fallback (cursor with dictionary rows).
+
+
+    # Apenas Postgres/Supabase
     try:
         import psycopg2
         import psycopg2.extras
-
         conn = psycopg2.connect(DB_TARGET, cursor_factory=psycopg2.extras.RealDictCursor)
         return conn
     except Exception:
@@ -74,75 +66,16 @@ def get_connection():
         try:
             import pg8000
             from urllib.parse import urlparse
-
             parsed = urlparse(DB_TARGET)
             user = parsed.username
             password = parsed.password
             host = parsed.hostname or "localhost"
             port = int(parsed.port) if parsed.port else 5432
             dbname = parsed.path.lstrip("/") or "postgres"
-
             raw_conn = pg8000.connect(user=user, host=host, port=port, database=dbname, password=password)
-
-            class _PG8000Cursor:
-                def __init__(self, cur):
-                    self._cur = cur
-
-                def execute(self, *args, **kwargs):
-                    return self._cur.execute(*args, **kwargs)
-
-                def executemany(self, query, seq):
-                    for params in seq:
-                        self._cur.execute(query, params)
-                    return None
-
-                def fetchone(self):
-                    row = self._cur.fetchone()
-                    return _row_to_dict(self._cur, row)
-
-                def fetchall(self):
-                    rows = self._cur.fetchall()
-                    return [
-                        _row_to_dict(self._cur, r)
-                        for r in rows
-                    ]
-
-                def close(self):
-                    try:
-                        self._cur.close()
-                    except Exception:
-                        pass
-
-            def _row_to_dict(cur, row):
-                if row is None:
-                    return None
-                desc = getattr(cur, 'description', None)
-                if not desc:
-                    return row
-                names = [d[0] for d in desc]
-                if isinstance(row, dict):
-                    return row
-                if isinstance(row, (list, tuple)):
-                    return {names[i]: row[i] for i in range(len(names))}
-                return row
-
-            class _PG8000Conn:
-                def __init__(self, c):
-                    self._c = c
-
-                def cursor(self):
-                    return _PG8000Cursor(self._c.cursor())
-
-                def commit(self):
-                    return self._c.commit()
-
-                def close(self):
-                    return self._c.close()
-
-            return _PG8000Conn(raw_conn)
+            return raw_conn
         except Exception:
-            raise RuntimeError("Postgres driver not installed. Install psycopg2-binary or pg8000.")
-
+            raise RuntimeError("Postgres driver not installed. Install psycopg2-binary ou pg8000.")
 
 def init_db():
     conn = get_connection()
