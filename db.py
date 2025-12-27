@@ -89,33 +89,20 @@ def _ensure_initialized():
     logger.info("Using Postgres database via GESTAO_DB/DATABASE_URL")
 
 
-# Propriedades para acesso às variáveis (compatibilidade)
-@property
-def DB_TARGET():
-    _ensure_initialized()
-    return _DB_TARGET
-
-
-@property
-def DB_KIND():
-    _ensure_initialized()
-    return _DB_KIND
-
-
 # Para compatibilidade com código existente que importa DB_TARGET e DB_KIND
-def _get_db_target():
-    _ensure_initialized()
-    return _DB_TARGET
-
-
-def _get_db_kind():
+def get_db_kind():
     _ensure_initialized()
     return _DB_KIND
 
 
-# Alias para compatibilidade
+def get_db_target():
+    _ensure_initialized()
+    return _DB_TARGET
+
+
+# Alias para compatibilidade (sempre "pg" pois só suportamos Postgres agora)
+DB_KIND = "pg"
 DB_TARGET = None  # Será inicializado na primeira chamada a get_connection()
-DB_KIND = "pg"  # Assume Postgres por padrão
 DB_PATH = None
 
 

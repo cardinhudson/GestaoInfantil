@@ -154,8 +154,11 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from models import User
 
-from db import DB_KIND, get_connection
+from db import get_db_kind, get_connection
 from models import Conversion, Debit, Task, User
+
+# Alias para compatibilidade - sempre "pg" pois só suportamos Postgres
+DB_KIND = "pg"
 
 logger = logging.getLogger(__name__)
 
