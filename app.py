@@ -484,6 +484,9 @@ def main():
                                 new_email = st.text_input('E-mail', value=u.email or '', key=f'edit_email_{u.id}')
                                 new_role = st.selectbox('Papel', ['child','validator'], index=0 if u.roles=='child' else 1, format_func=lambda x: 'Child' if x=='child' else 'Validador', key=f'edit_role_{u.id}')
                                 new_pwd = st.text_input('Nova senha (deixe em branco para manter)', type='password', key=f'edit_pwd_{u.id}')
+                                # Exibe foto atual, se houver
+                                if u.photo:
+                                    st.image(u.photo, width=80, caption='Foto atual')
                                 new_photo = st.file_uploader('Nova foto (opcional)', type=['png','jpg','jpeg'], key=f'edit_photo_{u.id}')
                                 submitted_edit = st.form_submit_button('Salvar alterações')
                                 if submitted_edit:
