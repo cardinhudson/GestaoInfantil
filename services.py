@@ -38,6 +38,9 @@ SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET = get_supabase_config()
 
 
 def upload_photo_supabase(user_id: int, file_bytes: bytes, original_filename: str) -> str:
+    if not SUPABASE_KEY:
+        raise ValueError("❌ SUPABASE_KEY não configurada! Configure as secrets no Streamlit Cloud em: Manage app > Secrets")
+    
     ext = os.path.splitext(original_filename)[1].lower() or ".jpg"
     fname = _safe_filename(f"user_{user_id}_{int(time.time())}{ext}")
     path = f"users/{fname}"
@@ -51,9 +54,14 @@ def upload_photo_supabase(user_id: int, file_bytes: bytes, original_filename: st
     try:
         resp = requests.put(url, headers=headers, data=file_bytes)
         if not resp.ok:
-            print(f"[Supabase Upload] Erro HTTP {resp.status_code}: {resp.text}")
+            error_msg = f"Erro HTTP {resp.status_code}: {resp.text}"
+            print(f"[Supabase Upload] {error_msg}")
+            # Adicionar dica específica se for erro 403
+            if resp.status_code == 403:
+                raise ValueError(f"❌ Erro de permissão no Supabase Storage. Verifique: 1) A SUPABASE_KEY nas secrets do Streamlit Cloud está correta (deve ser a service_role key), 2) O bucket '{SUPABASE_BUCKET}' existe no Supabase Storage, 3) As policies do bucket permitem upload.")
+            raise ValueError(f"Erro ao fazer upload: {error_msg}")
         resp.raise_for_status()
-    except Exception as e:
+    except requests.exceptions.HTTPError as e:
         print(f"[Supabase Upload] Falha ao enviar foto: {e}")
         print(f"URL: {url}")
         print(f"Headers: {{'Authorization': 'Bearer ...', 'Content-Type': 'application/octet-stream', 'x-upsert': 'true'}}")
