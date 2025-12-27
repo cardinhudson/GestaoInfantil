@@ -15,29 +15,34 @@ logger = logging.getLogger(__name__)
 
 
 def _get_db_target_from_env() -> Optional[str]:
-    # Força uso do Postgres/Supabase. Não permite fallback para SQLite.
+    """
+    Obtém a string de conexão do banco de dados.
+    
+    No Streamlit Cloud, as secrets de nível raiz são automaticamente
+    expostas como variáveis de ambiente. Portanto, GESTAO_DB configurado
+    nas secrets estará disponível em os.environ["GESTAO_DB"].
+    """
+    # Primeiro tenta variáveis de ambiente (funciona tanto localmente quanto no Cloud)
     target = os.environ.get("GESTAO_DB") or os.environ.get("DATABASE_URL")
     if target:
-        logger.info(f"DB target found in environment variables")
+        logger.info("DB target found in environment variables")
         return target
+    
+    # Fallback: tenta st.secrets diretamente (para casos onde env não foi populado)
     try:
-        import streamlit as _st  # type: ignore
-        secrets = getattr(_st, "secrets", None)
-        if secrets is not None:
-            # Streamlit Cloud: secrets é um objeto SecretsMapping, não dict
-            try:
-                if "GESTAO_DB" in secrets:
-                    logger.info("DB target found in st.secrets (GESTAO_DB)")
-                    return secrets["GESTAO_DB"]
-                if "DATABASE_URL" in secrets:
-                    logger.info("DB target found in st.secrets (DATABASE_URL)")
-                    return secrets["DATABASE_URL"]
-            except Exception as e:
-                logger.warning(f"Erro ao ler secrets: {e}")
+        import streamlit as _st
+        if hasattr(_st, "secrets"):
+            secrets = _st.secrets
+            if "GESTAO_DB" in secrets:
+                logger.info("DB target found in st.secrets (GESTAO_DB)")
+                return secrets["GESTAO_DB"]
+            if "DATABASE_URL" in secrets:
+                logger.info("DB target found in st.secrets (DATABASE_URL)")
+                return secrets["DATABASE_URL"]
     except Exception as e:
-        logger.warning(f"Não foi possível importar/ler st.secrets: {e}")
-    # Se não encontrar, retorna None (tratado depois)
-    logger.error("Nenhuma configuração de banco encontrada!")
+        logger.debug(f"st.secrets not available: {e}")
+    
+    # Se não encontrar, retorna None (será tratado depois)
     return None
 
 
@@ -63,30 +68,27 @@ def _ensure_initialized():
     global _DB_TARGET, _DB_KIND, _DB_PATH, _initialized
     if _initialized:
         return
+    
     _DB_TARGET = _get_db_target_from_env()
+    
     if not _DB_TARGET:
-        # Mostra erro amigável no Streamlit se possível
-        try:
-            import streamlit as st
-            st.error("❌ **Erro de Configuração do Banco de Dados**")
-            st.warning("""
-            Nenhuma configuração de banco Postgres/Supabase encontrada!
-            
-            **Configure GESTAO_DB nas Secrets do Streamlit Cloud:**
-            1. Vá em Manage App → Settings → Secrets
-            2. Adicione: `GESTAO_DB = "postgresql://usuario:senha@host:porta/database"`
-            3. Salve e reinicie o app
-            """)
-            st.stop()
-        except Exception:
-            pass
-        raise RuntimeError("[ERRO] Configure GESTAO_DB ou DATABASE_URL nas secrets/ambiente.")
+        # Não lançar erro aqui - deixar o Streamlit mostrar a página de erro
+        logger.error("GESTAO_DB não configurado! Configure nas secrets do Streamlit Cloud.")
+        raise RuntimeError(
+            "❌ GESTAO_DB não configurado!\n\n"
+            "Configure nas Secrets do Streamlit Cloud:\n"
+            "1. Vá em Manage App → Settings → Secrets\n"
+            "2. Adicione: GESTAO_DB = \"postgresql://usuario:senha@host:porta/database\"\n"
+            "3. Salve e reinicie o app"
+        )
+    
     if not _DB_TARGET.startswith("postgres"):
-        raise RuntimeError("[ERRO] O sistema exige banco Postgres/Supabase. String de conexão inválida.")
+        raise RuntimeError(f"String de conexão inválida. Deve começar com 'postgres'. Recebido: {_DB_TARGET[:20]}...")
+    
     _DB_KIND = "pg"
     _DB_PATH = None
     _initialized = True
-    logger.info("Using Postgres database via GESTAO_DB/DATABASE_URL")
+    logger.info("Postgres database initialized successfully")
 
 
 # Para compatibilidade com código existente que importa DB_TARGET e DB_KIND
