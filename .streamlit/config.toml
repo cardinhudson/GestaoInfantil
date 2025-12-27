@@ -1,13 +1,12 @@
 [server]
-# headless = false: abre o navegador automaticamente ao rodar localmente
-# No Streamlit Cloud, isso é ignorado automaticamente
-headless = false
-address = "localhost"
+# headless = true: necessário para Streamlit Cloud
+headless = true
+# address = "0.0.0.0": escuta em todas as interfaces (necessário para Cloud)
+address = "0.0.0.0"
 port = 8501
-enableCORS = true
+enableCORS = false
+enableXsrfProtection = false
 
 [browser]
 gatherUsageStats = false
-serverAddress = "localhost"
-serverPort = 8501
 
