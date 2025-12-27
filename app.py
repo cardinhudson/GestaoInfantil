@@ -35,35 +35,33 @@ def safe_rerun():
         raise
 
 
-# Logging setup
+# Logging setup - simplificado para Streamlit Cloud
 LOG_DIR = os.environ.get('GESTAO_LOGS', 'logs')
-os.makedirs(LOG_DIR, exist_ok=True)
-log_file = os.path.join(LOG_DIR, 'app.log')
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)]
-)
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log_file = os.path.join(LOG_DIR, 'app.log')
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)]
+    )
+except Exception:
+    # Fallback para apenas stdout se não conseguir criar arquivo de log
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
 
-# Registrar exceções não tratadas em arquivo para facilitar debug em deploys
+# Registrar exceções não tratadas para facilitar debug
 def _log_uncaught_exceptions(exctype, value, tb):
-    try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        with open(os.path.join(LOG_DIR, 'startup_error.log'), 'a', encoding='utf-8') as fh:
-            fh.write('\n=== Uncaught exception ===\n')
-            traceback.print_exception(exctype, value, tb, file=fh)
-    except Exception:
-        # Não devemos falhar o processo ao tentar logar a exceção
-        pass
+    logging.error("Uncaught exception", exc_info=(exctype, value, tb))
 
 sys.excepthook = _log_uncaught_exceptions
 
 # Marca de importação para ajudar a diagnosticar se o arquivo é carregado corretamente
-try:
-    logging.info('app.py imported — starting module initialization')
-except Exception:
-    pass
+logging.info('app.py imported — starting module initialization')
 
 def photo_or_placeholder(user, width=60):
     """Retorna o caminho/URL da foto do usuário se existir.
