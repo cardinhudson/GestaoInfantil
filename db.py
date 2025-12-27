@@ -18,6 +18,7 @@ def _get_db_target_from_env() -> Optional[str]:
     # Força uso do Postgres/Supabase. Não permite fallback para SQLite.
     target = os.environ.get("GESTAO_DB") or os.environ.get("DATABASE_URL")
     if target:
+        logger.info(f"DB target found in environment variables")
         return target
     try:
         import streamlit as _st  # type: ignore
@@ -26,15 +27,18 @@ def _get_db_target_from_env() -> Optional[str]:
             # Streamlit Cloud: secrets é um objeto SecretsMapping, não dict
             try:
                 if "GESTAO_DB" in secrets:
+                    logger.info("DB target found in st.secrets (GESTAO_DB)")
                     return secrets["GESTAO_DB"]
                 if "DATABASE_URL" in secrets:
+                    logger.info("DB target found in st.secrets (DATABASE_URL)")
                     return secrets["DATABASE_URL"]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Erro ao ler secrets: {e}")
     except Exception as e:
-        logger.warning(f"Não foi possível ler st.secrets: {e}")
-    # Se não encontrar, ERRO explícito
-    raise RuntimeError("\n[ERRO] Nenhuma configuração de banco Postgres/Supabase encontrada!\n\nAdicione GESTAO_DB ou DATABASE_URL nas secrets do Streamlit ou variáveis de ambiente, no formato:\nGESTAO_DB = 'postgres://usuario:senha@host:porta/database'\n\nNão é mais permitido usar SQLite local.\n")
+        logger.warning(f"Não foi possível importar/ler st.secrets: {e}")
+    # Se não encontrar, retorna None (tratado depois)
+    logger.error("Nenhuma configuração de banco encontrada!")
+    return None
 
 
 def _resolve_sqlite_path(target: Optional[str]) -> Path:
@@ -60,8 +64,25 @@ def _ensure_initialized():
     if _initialized:
         return
     _DB_TARGET = _get_db_target_from_env()
-    if not _DB_TARGET or not _DB_TARGET.startswith("postgres"):
-        raise RuntimeError("\n[ERRO] O sistema exige configuração de banco Postgres/Supabase.\nConfigure GESTAO_DB ou DATABASE_URL nas secrets/ambiente.\n")
+    if not _DB_TARGET:
+        # Mostra erro amigável no Streamlit se possível
+        try:
+            import streamlit as st
+            st.error("❌ **Erro de Configuração do Banco de Dados**")
+            st.warning("""
+            Nenhuma configuração de banco Postgres/Supabase encontrada!
+            
+            **Configure GESTAO_DB nas Secrets do Streamlit Cloud:**
+            1. Vá em Manage App → Settings → Secrets
+            2. Adicione: `GESTAO_DB = "postgresql://usuario:senha@host:porta/database"`
+            3. Salve e reinicie o app
+            """)
+            st.stop()
+        except Exception:
+            pass
+        raise RuntimeError("[ERRO] Configure GESTAO_DB ou DATABASE_URL nas secrets/ambiente.")
+    if not _DB_TARGET.startswith("postgres"):
+        raise RuntimeError("[ERRO] O sistema exige banco Postgres/Supabase. String de conexão inválida.")
     _DB_KIND = "pg"
     _DB_PATH = None
     _initialized = True
