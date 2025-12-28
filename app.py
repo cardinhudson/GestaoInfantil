@@ -96,20 +96,17 @@ def main():
     st.set_page_config(page_title="Gestão Infantil", layout="wide")
 
     # Diagnóstico explícito para Streamlit Cloud: print/log no início
-    st.caption(':blue[Iniciando app Gestão Infantil - diagnóstico Streamlit Cloud]')
     print('==== [DEBUG] Entrou no main() do app.py ====', flush=True)
     logging.info('==== [DEBUG] Entrou no main() do app.py ====')
 
     try:
         init_db()
-        st.write(':green[init_db() executado com sucesso]')
     except Exception as e:
         logging.exception("Falha ao inicializar o DB")
         st.error(f"❌ Falha ao inicializar o DB: {e}")
         st.stop()
     try:
         seed_sample_data()
-        st.write(':green[seed_sample_data() executado com sucesso]')
     except Exception as e:
         logging.exception("Falha ao rodar seed_sample_data")
         st.error(f"❌ Falha ao rodar seed_sample_data: {e}")
@@ -546,7 +543,7 @@ def main():
                         if confirm and st.button('Excluir usuário', key=f'delete_{u.id}'):
                             try:
                                 # remover foto do disco se existir (apenas paths locais, não URLs)
-                                if u.photo and not u.photo.startswith('http') and os.path.exists(u.photo):
+                                if u.photo anstred not u.photo.startswith('http') and os.path.exists(u.photo):
                                     try:
                                         os.remove(u.photo)
                                     except Exception as e:
