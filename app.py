@@ -543,7 +543,7 @@ def main():
                         if confirm and st.button('Excluir usuário', key=f'delete_{u.id}'):
                             try:
                                 # remover foto do disco se existir (apenas paths locais, não URLs)
-                                if u.photo anstred not u.photo.startswith('http') and os.path.exists(u.photo):
+                                if u.photo and not u.photo.startswith('http') and os.path.exists(u.photo):
                                     try:
                                         os.remove(u.photo)
                                     except Exception as e:
